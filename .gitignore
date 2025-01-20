@@ -11,3 +11,5 @@ foggytcp/*
 !foggytcp/src/
 !foggytcp/utils/
 !foggytcp/Makefile
+!foggytcp/testfile
+!*.sh

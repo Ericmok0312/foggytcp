@@ -41,12 +41,104 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
   uint8_t flags = get_flags(hdr);
 
   switch (flags) {
+    case FIN_FLAG_MASK: {
+      printf("Receive FIN\n");
+      // Send FIN-ACK
+      uint8_t *fin_ack_pkt = create_packet(
+          sock->my_port, ntohs(sock->conn.sin_port),
+          sock->window.last_byte_sent,  // Telling the client that we are ready to receive, and the initial seq number
+          get_seq(hdr) + 1,
+          sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), FIN_FLAG_MASK,
+          MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
+      sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
+             (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+      free(fin_ack_pkt);
+
+      if (get_payload_len(pkt) > 0) {
+        debug_printf("Received data packet %d %d\n", get_seq(hdr),
+                     get_seq(hdr) + get_payload_len(pkt));
+
+        sock->window.advertised_window = get_advertised_window(hdr);
+        // Add the packet to receive window and process receive window
+        add_receive_window(sock, pkt);
+        process_receive_window(sock);
+      } 
+
+      /// TODO: Implement the logic to close the connection
+    }
+    break;
+
+
+    case SYN_FLAG_MASK: { // First connection
+      debug_printf("Received SYN, init seq %d \n", get_seq(hdr));
+                  
+      // Update next_seq_expected  
+      sock->window.next_seq_expected = get_seq(hdr) + 1;
+
+      // Send SYN-ACK
+      uint8_t *syn_ack_pkt = create_packet(
+          sock->my_port, ntohs(sock->conn.sin_port),
+          sock->window.last_byte_sent,  // Telling the client that we are ready to receive, and the initial seq number
+          get_seq(hdr) + 1,
+          sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), SYN_FLAG_MASK | ACK_FLAG_MASK,
+          MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
+
+      sendto(sock->socket, syn_ack_pkt, sizeof(foggy_tcp_header_t), 0,
+             (struct sockaddr *)&(sock->conn), sizeof(sock->conn));  //loading the packet to the buffer of socket, waiting socket to read
+      free(syn_ack_pkt);
+
+
+      // loading message if any
+      if (get_payload_len(pkt) > 0) {
+        debug_printf("Received data packet %d %d\n", get_seq(hdr),
+                     get_seq(hdr) + get_payload_len(pkt));
+
+        sock->window.advertised_window = get_advertised_window(hdr);
+        // Add the packet to receive window and process receive window
+        add_receive_window(sock, pkt);
+        process_receive_window(sock);
+      } 
+    break;
+    // NOT Fallthrough
+
+    case SYN_FLAG_MASK | ACK_FLAG_MASK: {
+      debug_printf("Received SYN-ACK %d-%d\n", get_seq(hdr), get_ack(hdr));
+      // Update next_seq_expected
+      sock->window.next_seq_expected = get_seq(hdr) + 1;
+
+      // Send ACK
+      debug_printf("Sending ACK packet %d\n", sock->window.next_seq_expected);
+
+      uint8_t *ack_pkt = create_packet(
+          sock->my_port, ntohs(sock->conn.sin_port),
+          sock->window.last_byte_sent, sock->window.next_seq_expected,
+          sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
+          MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+          NULL, NULL, 0);
+      sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
+             (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+      free(ack_pkt);
+
+      // loading message if any
+      if (get_payload_len(pkt) > 0) {
+        debug_printf("Received data packet %d %d\n", get_seq(hdr),
+                     get_seq(hdr) + get_payload_len(pkt));
+
+        sock->window.advertised_window = get_advertised_window(hdr);
+        // Add the packet to receive window and process receive window
+        add_receive_window(sock, pkt);
+        process_receive_window(sock);
+      }
+    }
+    break;
+
     case ACK_FLAG_MASK: {
       uint32_t ack = get_ack(hdr);
       printf("Receive ACK %d\n", ack);
 
+
       // if (get_payload_len(pkt) == 0) handle_congestion_window(sock, pkt);
-      sock->window.advertised_window = get_advertised_window(hdr);
+      sock->window.advertised_window = get_advertised_window(hdr); 
 
       if (after(ack, sock->window.last_ack_received)) {
         sock->window.last_ack_received = ack;
@@ -77,8 +169,11 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
         free(ack_pkt);
       }
     }
+    }
   }
 }
+
+
 
 /**
  * Breaks up the data into packets and sends a single packet at a time.
@@ -153,6 +248,8 @@ void process_receive_window(foggy_socket_t *sock) {
     cur_slot->msg = NULL;
   }
 }
+
+//TODO: implement sliding window
 
 void transmit_send_window(foggy_socket_t *sock) {
   if (sock->send_window.empty()) return;

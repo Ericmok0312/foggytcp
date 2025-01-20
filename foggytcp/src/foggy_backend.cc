@@ -84,6 +84,8 @@ void check_for_pkt(foggy_socket_t *sock, foggy_read_mode_t flags) {
     default:
       perror("ERROR unknown flag");
   }
+
+
   if (len >= (ssize_t)sizeof(foggy_tcp_header_t)) {
     plen = get_plen(&hdr);
     pkt = (uint8_t*) malloc(plen);
@@ -92,11 +94,13 @@ void check_for_pkt(foggy_socket_t *sock, foggy_read_mode_t flags) {
                    (struct sockaddr *)&(sock->conn), &conn_len);
       buf_size = buf_size + n;
     }
-    on_recv_pkt(sock, pkt);
+    on_recv_pkt(sock, pkt);  // calling function to handle the received packet, some logic to be implemented in this function
     free(pkt);
   }
   pthread_mutex_unlock(&(sock->recv_lock));
 }
+
+
 
 void *begin_backend(void *in) {
   foggy_socket_t *sock = (foggy_socket_t *)in;
@@ -119,19 +123,23 @@ void *begin_backend(void *in) {
       check_for_pkt(sock, NO_WAIT);
     }
 
-    if (death && buf_len == 0 && sock->send_window.empty()) {
-      break;
+    if (death && buf_len == 0 && sock->send_window.empty()) { // when the three condition is true, then the socket is destroyed
+      break;   
     }
 
-    if (buf_len > 0) {
-      
+    // Normal Work Flows
+    if (buf_len > 0) {  // something in the data to send
       data = (uint8_t*)malloc(buf_len);
-      memcpy(data, sock->sending_buf, buf_len);
+      memcpy(data, sock->sending_buf, buf_len); // copy the data to send
+
+      // free the sending buffer and reset the sending length in socket
       sock->sending_len = 0;
       free(sock->sending_buf);
       sock->sending_buf = NULL;
+
+      // unlock the sending lock, allow other process to send data
       pthread_mutex_unlock(&(sock->send_lock));
-      send_pkts(sock, data, buf_len);
+      send_pkts(sock, data, buf_len); // logic to send the data, need to be changed
       free(data);
     } else {
       pthread_mutex_unlock(&(sock->send_lock));
@@ -153,4 +161,16 @@ void *begin_backend(void *in) {
 
   pthread_exit(NULL);
   return NULL;
+}
+
+
+void foggy_listen(foggy_socket_t *sock) {
+  if (sock->type != TCP_LISTENER) {
+    perror("ERROR not a listener socket");
+    return;
+  }
+
+  while (1) {
+    check_for_pkt(sock, NO_FLAG);
+  }
 }

@@ -25,6 +25,7 @@ from releasing their forks in any public places. */
 
 void* foggy_socket(const foggy_socket_type_t socket_type,
                const char *server_port, const char *server_ip) {
+
   foggy_socket_t* sock = new foggy_socket_t;
   int sockfd, optval;
   socklen_t len;
@@ -53,10 +54,14 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
   // FIXME: Sequence numbers should be randomly initialized. The next expected
   // sequence number should be initialized according to the SYN packet from the
   // other side of the connection.
-  sock->window.last_byte_sent = 0;
-  sock->window.last_ack_received = 0;
+
+  srand(time(NULL));
+
+  sock->window.last_byte_sent = (uint32_t)rand(); // some agreed seq number
+  sock->window.last_ack_received = 0; 
   sock->window.dup_ack_count = 0;
-  sock->window.next_seq_expected = 0;
+  sock->window.next_seq_expected = 0; // to be filled in first connection
+
   sock->window.ssthresh = WINDOW_INITIAL_SSTHRESH;
   sock->window.advertised_window = WINDOW_INITIAL_ADVERTISED;
   sock->window.congestion_window = WINDOW_INITIAL_WINDOW_SIZE;
@@ -74,6 +79,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
   }
 
   uint16_t portno = (uint16_t)atoi(server_port);
+
   switch (socket_type) {
     case TCP_INITIATOR:
       if (server_ip == NULL) {
@@ -82,47 +88,56 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
       }
       memset(&conn, 0, sizeof(conn));
       
+      //should change to wait connection
       conn.sin_family = AF_INET;
       conn.sin_addr.s_addr = inet_addr(server_ip);
       conn.sin_port = htons(portno);
+
+      /// TODO : change this to connect to the server given port and ip
       sock->conn = conn;
 
       my_addr.sin_family = AF_INET;
       my_addr.sin_addr.s_addr = htonl(INADDR_ANY);
       my_addr.sin_port = 0;
+
       if (bind(sockfd, (struct sockaddr *)&my_addr, sizeof(my_addr)) < 0) {
         perror("ERROR on binding");
         return NULL;
       }
-
       break;
 
-    case TCP_LISTENER:
+    case TCP_LISTENER:  
+
       memset(&conn, 0, sizeof(conn));
       conn.sin_family = AF_INET;
       conn.sin_addr.s_addr = htonl(INADDR_ANY);
       conn.sin_port = htons(portno);
-
       optval = 1;
       setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const void *)&optval,
                  sizeof(int));
-      if (bind(sockfd, (struct sockaddr *)&conn, sizeof(conn)) < 0) {
+      if (bind(sockfd, (struct sockaddr *)&conn, sizeof(conn)) < 0) {  //binding socket
         perror("ERROR on binding");
         return NULL;
       }
       sock->conn = conn;
       break;
+  
 
     default:
       perror("Unknown Flag");
       return NULL;
   }
+
+
   getsockname(sockfd, (struct sockaddr *)&my_addr, &len);
   sock->my_port = ntohs(my_addr.sin_port);
 
   pthread_create(&(sock->thread_id), NULL, begin_backend, (void *)sock);
   return (void*)sock;
 }
+
+
+
 
 int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
@@ -147,7 +162,11 @@ int foggy_close(void *in_sock) {
   return close(sock->socket);
 }
 
+
+
+
 int foggy_read(void* in_sock, void *buf, int length) {
+
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;  
   uint8_t *new_buf;
   int read_len = 0;

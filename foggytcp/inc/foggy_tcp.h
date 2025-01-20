@@ -58,6 +58,7 @@ typedef struct {
 typedef enum {
   TCP_INITIATOR = 0,
   TCP_LISTENER = 1,
+  TCP_ACCEPTER = 2, /// TODO Implement this later
 } foggy_socket_type_t;
 
 typedef struct {
