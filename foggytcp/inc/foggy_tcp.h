@@ -24,6 +24,7 @@ from releasing their forks in any public places. */
 #include "foggy_packet.h"
 #include "grading.h"
 
+
 using namespace std;
 
 #define EXIT_SUCCESS 0
@@ -32,6 +33,9 @@ using namespace std;
 
 /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
 #define RECEIVE_WINDOW_SLOT_SIZE 64
+
+
+#define TIMEOUT_SECONDS 1
 
 typedef enum {
   RENO_SLOW_START = 0,

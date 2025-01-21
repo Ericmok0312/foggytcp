@@ -64,6 +64,7 @@ int main(int argc, const char* argv[]) {
   }
 
   /* Close the socket and the output file */
+  printf("Server Closing socket\n");
   foggy_close(sock);
   ofs.close();
 

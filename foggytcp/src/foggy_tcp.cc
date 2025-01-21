@@ -148,6 +148,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
 int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
+  if(sock->connected != 0 && sock->dying == 0){
   usleep(10);
   // Ensure all data is sent before closing
 
@@ -158,13 +159,13 @@ int foggy_close(void *in_sock) {
 
   uint32_t temp = (uint32_t)rand();
   // Gracefully close the connection
-  if (sock->connected) {
-
-    printf("Sending FIN seq %d\n", sock->window.last_byte_sent+1);
+ 
     while(pthread_mutex_lock(&(sock->connected_lock))){      
     }
     sock->connected = 3;
     pthread_mutex_unlock(&(sock->connected_lock));
+
+    printf("Sending FIN seq %d\n", sock->window.last_byte_sent+1);
     // Send FIN packet to the other side
     uint8_t *fin_pkt = create_packet(
         sock->my_port, ntohs(sock->conn.sin_port),
@@ -177,10 +178,6 @@ int foggy_close(void *in_sock) {
           (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
 
 
-    while (sock->dying != 1) {
-      usleep(1);
-    }
-    
     free(fin_pkt);
   }
 
@@ -198,13 +195,7 @@ int foggy_close(void *in_sock) {
     if (sock->sending_buf != NULL) {
       free(sock->sending_buf);
     }
-    pthread_mutex_destroy(&(sock->recv_lock));
-    pthread_mutex_destroy(&(sock->send_lock));
-    pthread_mutex_destroy(&(sock->death_lock));
-    pthread_mutex_destroy(&(sock->connected_lock));
-    pthread_mutex_destroy(&(sock->window.ack_lock));
-    pthread_cond_destroy(&(sock->wait_cond));
-    delete sock;
+
   } else {
     perror("ERROR null socket\n");
     return EXIT_ERROR;
@@ -213,6 +204,7 @@ int foggy_close(void *in_sock) {
 
   return close(sock->socket);
 }
+
 
 
 
@@ -232,6 +224,9 @@ int foggy_read(void* in_sock, void *buf, int length) {
   }
 
   while (sock->received_len == 0) {
+    if(sock->connected == 3){
+      return 0;
+    }
     pthread_cond_wait(&(sock->wait_cond), &(sock->recv_lock));
   }
   if (sock->received_len > 0) {
