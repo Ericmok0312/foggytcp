@@ -97,7 +97,9 @@ struct foggy_socket_t {
   int dying;
   pthread_mutex_t death_lock;
   window_t window;
-
+  pthread_mutex_t connected_lock;
+  int connected;  // indicates if the socket is in valid connection state
+  
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;
   receive_window_slot_t receive_window[RECEIVE_WINDOW_SLOT_SIZE];

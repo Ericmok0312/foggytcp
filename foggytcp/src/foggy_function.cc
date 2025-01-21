@@ -40,10 +40,13 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)pkt;
   uint8_t flags = get_flags(hdr);
   switch (flags) {
-      case SYN_FLAG_MASK | ACK_FLAG_MASK: {
-          printf("Receive SYN-ACK\n");
+      case SYN_FLAG_MASK: {
+          debug_printf("Receive SYN %d, sending Seq %d \n", get_seq(hdr), sock->window.last_byte_sent);
+
           // Update next_seq_expected for the first connection
           sock->window.next_seq_expected = get_seq(hdr) + 1;
+
+          sock->connected = 1; // inidcate first handshaking done
 
           // Send SYN-ACK
           uint8_t *syn_ack_pkt = create_packet(
@@ -57,8 +60,33 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           free(syn_ack_pkt);
           break;
       }
+      case (SYN_FLAG_MASK | ACK_FLAG_MASK): {
+          debug_printf("Receive SYN-ACK %d-%d, sending ACK %d \n", get_seq(hdr), get_ack(hdr), get_seq(hdr) + 1);
+
+          // Update next_seq_expected for the first connection
+          sock->window.next_seq_expected = get_seq(hdr) + 1;
+          sock->window.last_ack_received = get_ack(hdr); // update ack
+
+          sock->connected = 2; // handshaking done, initiater side only need to confirm once
+
+          // Adding any possible data to receive window
+          add_receive_window(sock, pkt);
+          process_receive_window(sock);
+        
+          // Send SYN-ACK
+          uint8_t *syn_ack_pkt = create_packet(
+              sock->my_port, ntohs(sock->conn.sin_port),
+              sock->window.last_byte_sent,  // Telling the client that we are ready to receive, and the initial seq number
+              get_seq(hdr) + 1,
+              sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
+              MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
+          sendto(sock->socket, syn_ack_pkt, sizeof(foggy_tcp_header_t), 0,
+                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+          free(syn_ack_pkt);
+          break;
+      }
       case FIN_FLAG_MASK: {
-          printf("Receive FIN\n");
+          debug_printf("Receive FIN\n");
           // Send FIN-ACK
           uint8_t *fin_ack_pkt = create_packet(
               sock->my_port, ntohs(sock->conn.sin_port),
@@ -75,7 +103,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
       }
       case ACK_FLAG_MASK: {
           uint32_t ack = get_ack(hdr);
-          printf("Receive ACK %d\n", ack);
+          debug_printf("Receive ACK %d\n", ack);
 
           // TODO: change here to implement sliding window
 
@@ -85,8 +113,12 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           if (after(ack, sock->window.last_ack_received)) {
               sock->window.last_ack_received = ack;
           }
-          break;
-      }
+
+          if(sock->connected == 1) {
+              sock->connected = 2; // connection established
+          }
+      } 
+      // Fallthrough
       default: {
           if (get_payload_len(pkt) > 0) {
               debug_printf("Received data packet %d %d\n", get_seq(hdr),
@@ -94,7 +126,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
 
               sock->window.advertised_window = get_advertised_window(hdr);
               // Add the packet to receive window and process receive window
-              add_receive_window(sock, pkt);
+              add_receive_window(sock, pkt); 
               process_receive_window(sock);
               // Send ACK
               debug_printf("Sending ACK packet %d\n", sock->window.next_seq_expected);

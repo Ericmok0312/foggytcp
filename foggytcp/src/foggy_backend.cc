@@ -32,6 +32,9 @@ from releasing their forks in any public places. */
 #include "foggy_packet.h"
 #include "foggy_tcp.h"
 
+#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
+#define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+
 /**
  * Tells if a given sequence number has been acknowledged by the socket.
  *
@@ -169,8 +172,60 @@ void foggy_listen(foggy_socket_t *sock) {
     perror("ERROR not a listener socket");
     return;
   }
+  
+  printf("Listening on port %d\n", ntohs(sock->conn.sin_port));
 
-  while (1) {
+  while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
+  }
+
+  while (sock->connected != 2) {
     check_for_pkt(sock, NO_FLAG);
   }
+
+  sock->window.last_byte_sent++; // update the last byte sent
+
+  pthread_mutex_unlock(&(sock->connected_lock)); // release the lock
+
+  printf("Connection established\n");
+}
+
+
+
+void foggy_connect(foggy_socket_t *sock) {
+  if (sock->type != TCP_INITIATOR) {
+    perror("ERROR not a initiator socket");
+    return;
+  }
+
+  printf("Connecting to port %d\n", ntohs(sock->conn.sin_port));
+
+  while(pthread_mutex_lock(&(sock->send_lock)) != 0) {  
+  }
+
+  printf("Sending SYN packet %d\n", sock->window.last_byte_sent);
+  
+  uint8_t *syn_pkt = create_packet(
+                  sock->my_port, ntohs(sock->conn.sin_port),
+                  sock->window.last_byte_sent, sock->window.next_seq_expected,
+                  sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), SYN_FLAG_MASK,
+                  MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+                  NULL, NULL, 0);
+
+  sendto(sock->socket, syn_pkt, sizeof(foggy_tcp_header_t), 0,
+                    (struct sockaddr *)&(sock->conn), sizeof(sock->conn)); // sending syn packet, currently no timeout
+
+  free(syn_pkt); // prevent leakage
+
+  pthread_mutex_unlock(&(sock->send_lock)); // release the lock
+
+  while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
+  }
+  while (sock->connected != 2) {
+    check_for_pkt(sock, NO_FLAG);
+  }
+  sock->window.last_byte_sent++; // update the last byte sent
+
+  pthread_mutex_unlock(&(sock->connected_lock));
+  
+  printf("Connection established\n");
 }

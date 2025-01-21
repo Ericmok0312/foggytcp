@@ -41,4 +41,9 @@ int has_been_acked(foggy_socket_t *sock, uint32_t seq);
  */
 void check_for_pkt(foggy_socket_t *sock, foggy_read_mode_t flags);
 
+
+void foggy_listen(foggy_socket_t *sock);
+
+void foggy_connect(foggy_socket_t *sock);
+
 #endif  // BACKEND_H_

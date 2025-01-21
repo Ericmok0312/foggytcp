@@ -51,6 +51,9 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
   sock->dying = 0;
   pthread_mutex_init(&(sock->death_lock), NULL);
 
+  sock->connected = 0;
+  pthread_mutex_init(&(sock->connected_lock), NULL);
+
   // FIXME: Sequence numbers should be randomly initialized. The next expected
   // sequence number should be initialized according to the SYN packet from the
   // other side of the connection.
@@ -93,6 +96,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
       conn.sin_addr.s_addr = inet_addr(server_ip);
       conn.sin_port = htons(portno);
 
+
       /// TODO : change this to connect to the server given port and ip
       sock->conn = conn;
 
@@ -104,9 +108,10 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
         perror("ERROR on binding");
         return NULL;
       }
+      foggy_connect(sock);
       break;
 
-    case TCP_LISTENER:  
+    case TCP_LISTENER:
 
       memset(&conn, 0, sizeof(conn));
       conn.sin_family = AF_INET;
@@ -120,6 +125,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
         return NULL;
       }
       sock->conn = conn;
+      foggy_listen(sock);
       break;
   
 
