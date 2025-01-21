@@ -23,6 +23,8 @@ from releasing their forks in any public places. */
 
 #include "foggy_backend.h"
 
+#define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+
 void* foggy_socket(const foggy_socket_type_t socket_type,
                const char *server_port, const char *server_ip) {
 
@@ -144,16 +146,51 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
 
 
-
 int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
-  while (pthread_mutex_lock(&(sock->death_lock)) != 0) {
-  }
-  sock->dying = 1;
-  pthread_mutex_unlock(&(sock->death_lock));
+  usleep(10);
+  // Ensure all data is sent before closing
 
+  // Ensure ACK from server side is received
+
+  while (sock->window.last_ack_received < sock->window.last_byte_sent) {
+  }
+
+  uint32_t temp = (uint32_t)rand();
+  // Gracefully close the connection
+  if (sock->connected) {
+
+    printf("Sending FIN seq %d\n", sock->window.last_byte_sent+1);
+    while(pthread_mutex_lock(&(sock->connected_lock))){      
+    }
+    sock->connected = 3;
+    pthread_mutex_unlock(&(sock->connected_lock));
+    // Send FIN packet to the other side
+    uint8_t *fin_pkt = create_packet(
+        sock->my_port, ntohs(sock->conn.sin_port),
+        sock->window.last_byte_sent+1, sock->window.next_seq_expected,
+        sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), FIN_FLAG_MASK,
+        MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
+        NULL, 0);
+
+    sendto(sock->socket, fin_pkt, sizeof(foggy_tcp_header_t), 0,
+          (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+
+
+    while (sock->dying != 1) {
+      usleep(1);
+    }
+    
+    free(fin_pkt);
+  }
+
+  // Mark the socket as dying
+
+
+  // Wait for the backend thread to finish
   pthread_join(sock->thread_id, NULL);
 
+  // Clean up resources
   if (sock != NULL) {
     if (sock->received_buf != NULL) {
       free(sock->received_buf);
@@ -161,10 +198,19 @@ int foggy_close(void *in_sock) {
     if (sock->sending_buf != NULL) {
       free(sock->sending_buf);
     }
+    pthread_mutex_destroy(&(sock->recv_lock));
+    pthread_mutex_destroy(&(sock->send_lock));
+    pthread_mutex_destroy(&(sock->death_lock));
+    pthread_mutex_destroy(&(sock->connected_lock));
+    pthread_mutex_destroy(&(sock->window.ack_lock));
+    pthread_cond_destroy(&(sock->wait_cond));
+    delete sock;
   } else {
     perror("ERROR null socket\n");
     return EXIT_ERROR;
   }
+
+
   return close(sock->socket);
 }
 

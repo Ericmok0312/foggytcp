@@ -14,6 +14,7 @@ from releasing their forks in any public places. */
 
 #include "foggy_function.h"
 #include "foggy_backend.h"
+#include <unistd.h>
 
 
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
@@ -86,24 +87,51 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           break;
       }
       case FIN_FLAG_MASK: {
-          debug_printf("Receive FIN\n");
+          debug_printf("Receive FIN %d\n", get_seq(hdr));
           // Send FIN-ACK
+          usleep(1);
           uint8_t *fin_ack_pkt = create_packet(
               sock->my_port, ntohs(sock->conn.sin_port),
-              sock->window.last_byte_sent,  // Telling the client that we are ready to receive, and the initial seq number
-              get_seq(hdr) + 1,
-              sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), FIN_FLAG_MASK | ACK_FLAG_MASK,
+              sock->window.last_byte_sent + 1,  // Telling the client that we are ready to receive, and the initial seq number
+              get_seq(hdr),
+              sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
               MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
-          sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
-                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-          free(fin_ack_pkt);
 
+            sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
+                (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+            free(fin_ack_pkt);
+
+          while(pthread_mutex_lock(&(sock->connected_lock))){
+          }
+          if(sock->connected == 3){
+            sock->connected = 0;
+            while(pthread_mutex_lock(&(sock->death_lock))){
+            }
+            sock->dying = 1;
+            pthread_mutex_unlock(&(sock->death_lock));
+          }
+          else{
+            sock->received_len = 0;
+            free(sock->received_buf);
+            sock->received_buf = NULL;
+            pthread_cond_signal(&(sock->wait_cond));
+            pthread_mutex_unlock(&(sock->recv_lock));
+
+          }
+            // Close the socket
           // TODO: Implement the logic to close the connection
           break;
       }
       case ACK_FLAG_MASK: {
           uint32_t ack = get_ack(hdr);
           debug_printf("Receive ACK %d\n", ack);
+
+          if(sock->connected == 3){
+            while(pthread_mutex_lock(&(sock->death_lock))){
+            }
+            sock->dying = 1;
+            pthread_mutex_unlock(&(sock->death_lock));
+          }
 
           // TODO: change here to implement sliding window
 
