@@ -111,23 +111,33 @@ void *begin_backend(void *in) {
   uint8_t *data;
 
   while (1) {
+
     while (pthread_mutex_lock(&(sock->death_lock)) != 0) {
     }
     death = sock->dying;
     pthread_mutex_unlock(&(sock->death_lock));
 
+    // printf("Backend running, dying %d\n", death);
     while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
     }
     buf_len = sock->sending_len;
 
     if (!sock->send_window.empty()) {
-      // printf("Sending window is not empty\n");
       send_pkts(sock, NULL, 0);
       check_for_pkt(sock, NO_WAIT);
     }
 
-    if (death && buf_len == 0 && sock->send_window.empty()) { // when the three condition is true, then the socket is destroyed
+
+    if (death == 1 && buf_len == 0 && sock->send_window.empty()) { // when the three condition is true, then the socket is destroyed
+      //printf("Socket is dying\n");
+      pthread_mutex_unlock(&(sock->send_lock));
       break;   
+    }
+
+    if(death == 2){
+      printf("FIN-ACK Timeout\n");
+      pthread_mutex_unlock(&(sock->send_lock));
+      break;
     }
 
     // Normal Work Flows
@@ -152,12 +162,19 @@ void *begin_backend(void *in) {
 
     while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
     }
+    while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {
+    }
 
-    send_signal = sock->received_len > 0;
+    send_signal = sock->received_len > 0  || sock->connected == 4;
 
+    pthread_mutex_unlock(&(sock->connected_lock));
+    
     pthread_mutex_unlock(&(sock->recv_lock));
 
+
+
     if (send_signal) {
+      // printf("signaling\n");
       pthread_cond_signal(&(sock->wait_cond));
     }
   }

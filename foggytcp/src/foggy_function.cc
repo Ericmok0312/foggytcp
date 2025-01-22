@@ -88,55 +88,46 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
       }
       case FIN_FLAG_MASK: {
           debug_printf("Receive FIN %d \n", get_seq(hdr));
-          // Send FIN-ACK
           uint8_t *fin_ack_pkt = create_packet(
               sock->my_port, ntohs(sock->conn.sin_port),
-              sock->window.last_byte_sent + 1,  
-              get_seq(hdr),
+              sock->window.last_byte_sent,    // Acknowledge the FIN packet
+              get_seq(hdr) + 1,
               sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
               MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
-
-            sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
+          sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
                 (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-
-
-          while(pthread_mutex_lock(&(sock->connected_lock))){
-          }
-          sock->connected = 3;
-          pthread_mutex_unlock(&(sock->connected_lock));
-          while(pthread_mutex_lock(&(sock->death_lock))){
-          }
-          sock->dying = 1;
-          pthread_mutex_unlock(&(sock->death_lock));
           free(fin_ack_pkt);
 
-          if(sock->connected != 3){
-            while(pthread_mutex_lock(&(sock->connected_lock))){
-            }
-            sock->connected = 3;
-            pthread_mutex_unlock(&(sock->connected_lock));
-            //pthread_mutex_unlock(&(sock->death_lock));
+          printf("Sending FIN-ACK %d\n", get_seq(hdr) + 1);
+
+
+          // Update the state to indicate that the connection is closing
+          while (pthread_mutex_lock(&(sock->connected_lock)) != 0) {
           }
-          // TODO: Implement the logic to close the connection
+          sock->connected = 4;
+          pthread_mutex_unlock(&(sock->connected_lock));
+          printf("Setting connected to 4\n");
           break;
       }
       case ACK_FLAG_MASK: {
           uint32_t ack = get_ack(hdr);
-          debug_printf("Receive ACK %d\n", ack);
-          if(sock->connected == 3){
-            while(pthread_mutex_lock(&(sock->death_lock))) {
-            }
-            sock->dying = 1;
-            pthread_mutex_unlock(&(sock->death_lock));  
-        }
-
           // TODO: change here to implement sliding window
 
           // if (get_payload_len(pkt) == 0) handle_congestion_window(sock, pkt);
           sock->window.advertised_window = get_advertised_window(hdr);
 
           if (after(ack, sock->window.last_ack_received)) {
-              sock->window.last_ack_received = ack;
+              sock->window.last_ack_received = ack;  
+              if(sock->connected == 3) {
+                  while(pthread_mutex_lock(&(sock->death_lock)) != 0){      
+                  }
+                  sock->dying = 1;
+                  pthread_mutex_unlock(&(sock->death_lock));
+                  printf("Receive FIN-ACK %d\n", get_ack(hdr));
+              }
+              else{
+                   printf("Receive ACK %d\n", get_ack(hdr));
+              }
           }
 
           if(sock->connected == 1) {
@@ -183,7 +174,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
  * @param data The data to be sent.
  * @param buf_len The length of the data being sent.
  */
-void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len) {
+void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
   uint8_t *data_offset = data;
   transmit_send_window(sock);
 
@@ -197,7 +188,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len) {
           sock->my_port, ntohs(sock->conn.sin_port),
           sock->window.last_byte_sent, sock->window.next_seq_expected,
           sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t) + payload_len,
-          ACK_FLAG_MASK,
+          flags,
           MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
           data_offset, payload_len);
       sock->send_window.push_back(slot);
@@ -206,7 +197,25 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len) {
       data_offset += payload_len;
       sock->window.last_byte_sent += payload_len;
     }
+  } else if (flags == FIN_FLAG_MASK) {
+    printf("Sending FIN %d\n", sock->window.last_byte_sent);
+    send_window_slot_t slot;
+    slot.is_sent = 0;
+    slot.msg = create_packet(
+        sock->my_port, ntohs(sock->conn.sin_port),
+        sock->window.last_byte_sent, sock->window.next_seq_expected,
+        sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t),
+        FIN_FLAG_MASK,
+        MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
+        NULL, 0);
+    sock->send_window.push_back(slot);
+    sock->window.last_byte_sent += 1;
+    while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
+    }
+    sock->connected = 3;
+    pthread_mutex_unlock(&(sock->connected_lock));
   }
+
   receive_send_window(sock);
 }
 

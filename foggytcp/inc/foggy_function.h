@@ -30,7 +30,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt);
  * @param data The data to be sent.
  * @param buf_len The length of the data being sent.
  */
-void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len);
+void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags = ACK_FLAG_MASK);
 
 /*<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<*/
 

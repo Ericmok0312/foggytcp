@@ -22,6 +22,7 @@ from releasing their forks in any public places. */
 #include <unistd.h>
 
 #include "foggy_backend.h"
+#include "foggy_function.h"
 
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 
@@ -148,44 +149,59 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
 int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
-  if(sock->connected != 0 && sock->dying == 0){
-  usleep(10);
+  usleep(100); // TODO should have better way to prevent entering this fucntion too early
+
+
+  //printf("foggy_close \n");
+  
   // Ensure all data is sent before closing
 
   // Ensure ACK from server side is received
 
-  while (sock->window.last_ack_received < sock->window.last_byte_sent) {
+  while (sock->window.last_ack_received < sock->window.last_byte_sent ) {
+    printf("Blocked here\n");
+    usleep(1000);
   }
 
-  uint32_t temp = (uint32_t)rand();
+
   // Gracefully close the connection
  
-    while(pthread_mutex_lock(&(sock->connected_lock))){      
+  
+  // Send FIN packet to the other side
+  
+  while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
+  }
+  
+  send_pkts(sock, NULL, 0, FIN_FLAG_MASK);
+
+  pthread_mutex_unlock(&(sock->send_lock));
+
+
+
+  // Wait for the FIN-ACK from the other side or timeout
+  int i = 0;
+  while (sock->dying == 0) {
+    printf("Waiting for FIN-ACK\n");
+    usleep(1000);
+    i++;
+    if (i == 3) {
+      while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
+        printf("Waiting send mutex");
+      }
+      sock->send_window.clear();
+      pthread_mutex_unlock(&(sock->send_lock));
+      while(pthread_mutex_lock(&(sock->death_lock)) != 0) {
+      }
+      printf("Setting dying to 2, timeout\n");
+      sock->dying = 2;
+      pthread_mutex_unlock(&(sock->death_lock));
     }
-    sock->connected = 3;
-    pthread_mutex_unlock(&(sock->connected_lock));
-
-    printf("Sending FIN seq %d\n", sock->window.last_byte_sent+1);
-    // Send FIN packet to the other side
-    uint8_t *fin_pkt = create_packet(
-        sock->my_port, ntohs(sock->conn.sin_port),
-        sock->window.last_byte_sent+1, sock->window.next_seq_expected,
-        sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), FIN_FLAG_MASK,
-        MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
-        NULL, 0);
-
-    sendto(sock->socket, fin_pkt, sizeof(foggy_tcp_header_t), 0,
-          (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-
-
-    free(fin_pkt);
   }
 
-  // Mark the socket as dying
-
-
+  printf("Closing thread\n");
   // Wait for the backend thread to finish
   pthread_join(sock->thread_id, NULL);
+  printf("Thread closed\n");
 
   // Clean up resources
   if (sock != NULL) {
@@ -200,7 +216,6 @@ int foggy_close(void *in_sock) {
     perror("ERROR null socket\n");
     return EXIT_ERROR;
   }
-
 
   return close(sock->socket);
 }
@@ -222,11 +237,16 @@ int foggy_read(void* in_sock, void *buf, int length) {
 
   while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
   }
+  printf("Reading bytes\n");
 
-  while (sock->received_len == 0) {
-    if(sock->connected == 3){
-      return 0;
+  if(sock->received_len == 0 && sock->connected == 4) {
+    while(pthread_mutex_lock(&(sock->death_lock))){
     }
+    sock->dying = 1;
+    pthread_mutex_unlock(&(sock->death_lock));
+  }
+
+  while (sock->received_len == 0 && sock->connected != 4) {
     pthread_cond_wait(&(sock->wait_cond), &(sock->recv_lock));
   }
   if (sock->received_len > 0) {
