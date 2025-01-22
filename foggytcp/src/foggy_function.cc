@@ -109,18 +109,19 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           printf("Setting connected to 4\n");
           break;
       }
-      case ACK_FLAG_MASK: {
+      case ACK_FLAG_MASK: {  // NEED TO CHANGE THIS
           uint32_t ack = get_ack(hdr);
           // TODO: change here to implement sliding window
 
           // if (get_payload_len(pkt) == 0) handle_congestion_window(sock, pkt);
-          sock->window.advertised_window = get_advertised_window(hdr);
+          sock->window.advertised_window = get_advertised_window(hdr); //getting the amount of data the receiver can accept
 
-          if (after(ack, sock->window.last_ack_received)) {
-              sock->window.last_ack_received = ack;  
+
+          if (after(ack, sock->window.last_ack_received)) { 
+              sock->window.last_ack_received = ack;                           
               if(sock->connected == 3) {
                   while(pthread_mutex_lock(&(sock->death_lock)) != 0){      
-                  }
+                  } 
                   sock->dying = 1;
                   pthread_mutex_unlock(&(sock->death_lock));
                   printf("Receive FIN-ACK %d\n", get_ack(hdr));
@@ -128,7 +129,8 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               else{
                    printf("Receive ACK %d\n", get_ack(hdr));
               }
-          }
+            }
+
 
           if(sock->connected == 1) {
               sock->connected = 2; // connection established
@@ -220,62 +222,119 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
 }
 
 
+
+
+
 void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
+
+  if(sock->receive_window.size() == RECEIVE_WINDOW_SLOT_SIZE) return;
+
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)pkt;
 
   // Stop-and-wait implementation
   // Insert the packet into the first place of receive window
-  receive_window_slot_t *cur_slot = &(sock->receive_window[0]);
-  if (cur_slot->is_used == 0) {
-    cur_slot->is_used = 1;
-    cur_slot->msg = (uint8_t*) malloc(get_plen(hdr));
-    memcpy(cur_slot->msg, pkt, get_plen(hdr));
-  }
+  // receive_window_slot_t *cur_slot = &(sock->receive_window[0]);
+  // if (cur_slot->is_used == 0) {
+  //   cur_slot->is_used = 1;
+  //   cur_slot->msg = (uint8_t*) malloc(get_plen(hdr));
+  //   memcpy(cur_slot->msg, pkt, get_plen(hdr));
+  // }
+
+
+  receive_window_slot_t temp;
+  temp.msg = (uint8_t*) malloc(get_plen(hdr));
+  temp.is_used = 1;
+  memcpy(temp.msg, pkt, get_plen(hdr));
+
+  sock->receive_window.push(move(temp));
+
 }
 
 void process_receive_window(foggy_socket_t *sock) {
   // Stop-and-wait implementation.
   // Only process the first packet in the window.
-  receive_window_slot_t *cur_slot = &(sock->receive_window[0]);
-  if (cur_slot->is_used != 0) {
-    foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
-    // Discard unexpected packet
-    if (get_seq(hdr) != sock->window.next_seq_expected) return;
-    // Update next seq number expected
-    uint16_t payload_len = get_payload_len(cur_slot->msg);
-    sock->window.next_seq_expected += payload_len;
-    // Copy to received_buf
-    sock->received_buf = (uint8_t*)
-        realloc(sock->received_buf, sock->received_len + payload_len);
-    memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
-           payload_len);
-    sock->received_len += payload_len;
-    // Free the slot
-    cur_slot->is_used = 0;
-    free(cur_slot->msg);
-    cur_slot->msg = NULL;
-  }
+  const receive_window_slot_t& cur_slot = sock->receive_window.top();
+
+
+  foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot.msg;
+  // Discard unexpected packet
+  if (get_seq(hdr) != sock->window.next_seq_expected) return;
+  // Update next seq number expected
+  uint16_t payload_len = get_payload_len(cur_slot.msg);
+  sock->window.next_seq_expected += payload_len;
+  // Copy to received_buf
+  sock->received_buf = (uint8_t*)
+      realloc(sock->received_buf, sock->received_len + payload_len);
+
+  memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot.msg),
+          payload_len);
+          
+  sock->received_len += payload_len;
+  // Free the slot
+  sock->receive_window.pop();
+
+
+
+
+  // if (cur_slot->is_used != 0) {
+  //   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
+  //   // Discard unexpected packet
+  //   if (get_seq(hdr) != sock->window.next_seq_expected) return;
+  //   // Update next seq number expected
+  //   uint16_t payload_len = get_payload_len(cur_slot->msg);
+  //   sock->window.next_seq_expected += payload_len;
+  //   // Copy to received_buf
+  //   sock->received_buf = (uint8_t*)
+  //       realloc(sock->received_buf, sock->received_len + payload_len);
+  //   memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
+  //          payload_len);
+  //   sock->received_len += payload_len;
+  //   // Free the slot
+  //   cur_slot->is_used = 0;
+  //   free(cur_slot->msg);
+  //   cur_slot->msg = NULL;
+  // }
 }
 
 //TODO: implement sliding window
 
 void transmit_send_window(foggy_socket_t *sock) {
-  if (sock->send_window.empty()) return;
-
-  // An stop-and-wait implementation. 
-  // For the first slot:
-  // If it has not been sent, send it.
-  // If it has been sent but not ACKed, skip.
-  send_window_slot_t& slot = sock->send_window.front();
-  foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)slot.msg;
-  if (slot.is_sent){
+  // Check if there are no new packets to process
+  if (sock->send_window.empty() || sock->window.last_sent_pos == sock->send_window.size() - 1) {
     return;
-  } else {
-    debug_printf("Sending packet %d %d\n", get_seq(hdr),
-                   get_seq(hdr) + get_payload_len(slot.msg));
-    slot.is_sent = 1;
-    sendto(sock->socket, slot.msg, get_plen(hdr), 0,
-            (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+  }
+
+  // Process the send window
+  while (true) {
+    send_window_slot_t &next_slot = sock->send_window[sock->window.last_sent_pos + 1];
+    uint16_t payload_len = get_payload_len(next_slot.msg);
+
+    if (sock->window.window_used + payload_len > sock->window.congestion_window ||
+        sock->window.advertised_window < payload_len) {
+      break;
+    }
+
+    // Update the window used size and advertised window size
+    sock->window.window_used += payload_len;
+    sock->window.advertised_window -= payload_len;
+
+    // Get the current slot and header
+    foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)next_slot.msg;
+
+    // Print debug information
+    debug_printf("Sending packet %d %d\n", get_seq(hdr), get_seq(hdr) + payload_len);
+
+    // Mark the slot as sent and send the packet
+    next_slot.is_sent = 1;
+    sendto(sock->socket, next_slot.msg, get_plen(hdr), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+
+    // Update the last sent position
+    sock->window.last_sent_pos++;
+
+    // Check if we have reached the end of the window to process
+    if (sock->window.last_sent_pos == sock->send_window.size() - 1) {
+      break;
+    }
   }
 }
 
@@ -293,7 +352,10 @@ void receive_send_window(foggy_socket_t *sock) {
     if (has_been_acked(sock, get_seq(hdr)) == 0) {
       break;
     }
+
     sock->send_window.pop_front();
+    sock->window.last_sent_pos--;
+    sock->window.window_used -= get_payload_len(slot.msg);
     free(slot.msg);
   }
 }

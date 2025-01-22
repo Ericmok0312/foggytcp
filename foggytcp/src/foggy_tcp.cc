@@ -72,12 +72,19 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
   sock->window.advertised_window = WINDOW_INITIAL_ADVERTISED;
   sock->window.congestion_window = WINDOW_INITIAL_WINDOW_SIZE;
   sock->window.reno_state = RENO_SLOW_START;
+
+  sock->window.window_used = 0;
+  sock->window.last_sent_pos = -1;
+
+  // sock->window.receive_window_start_ptr = 0;
+  // sock->window.receive_window_end_ptr = 0 // end_ptr pointing to first available slot
+
   pthread_mutex_init(&(sock->window.ack_lock), NULL);
 
-  for (int i = 0; i < RECEIVE_WINDOW_SLOT_SIZE; ++i) {
-    sock->receive_window[i].is_used = 0;
-    sock->receive_window[i].msg = NULL;
-  }
+  // for (int i = 0; i < RECEIVE_WINDOW_SLOT_SIZE; ++i) {
+  //   sock->receive_window[i].is_used = 0;
+  //   sock->receive_window[i].msg = NULL;
+  // }
 
   if (pthread_cond_init(&sock->wait_cond, NULL) != 0) {
     perror("ERROR condition variable not set\n");
@@ -158,10 +165,19 @@ int foggy_close(void *in_sock) {
 
   // Ensure ACK from server side is received
 
-  while (sock->window.last_ack_received < sock->window.last_byte_sent ) {
-    printf("Blocked here\n");
-    usleep(1000);
+  // while(sock->window.last_ack_received < sock->window.last_byte_sent){
+  //   usleep(100000);
+  // }
+
+
+  while(!after(sock->window.last_ack_received, sock->window.last_byte_sent-1)){ // checking for all byte acked, prevent overflow
+    usleep(100000);
   }
+
+  // while (!has_been_acked(sock, sock->window.last_byte_sent++)) {
+  //   printf("Blocked here\n");
+  //   usleep(100000);
+  // }
 
 
   // Gracefully close the connection

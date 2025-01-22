@@ -20,6 +20,7 @@ from releasing their forks in any public places. */
 #include <sys/types.h>
 #include <time.h>
 #include <deque>
+#include <queue>
 
 #include "foggy_packet.h"
 #include "grading.h"
@@ -67,7 +68,7 @@ typedef enum {
 
 typedef struct {
   uint32_t last_byte_sent;
-  uint32_t last_ack_received;
+  uint32_t last_ack_received; // The ACK we are waiting for
   
   uint32_t dup_ack_count;
   uint32_t next_seq_expected;
@@ -75,6 +76,12 @@ typedef struct {
   uint32_t ssthresh;
   uint32_t advertised_window;
   uint32_t congestion_window;
+
+  uint32_t window_used;
+  int32_t last_sent_pos;
+
+  // uint32_t receive_window_start_ptr;
+  // uint32_t receive_window_end_ptr;
 
   reno_state_t reno_state;
   pthread_mutex_t ack_lock;
@@ -103,11 +110,19 @@ struct foggy_socket_t {
   window_t window;
   pthread_mutex_t connected_lock;
   int connected;  // indicates if the socket is in valid connection state
-  // 1: double link 2: single link
+  // 0: not  connected 1: requesting/waiting 2: double link 3: requesting close connection 4: accepting close connection
   
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;
-  receive_window_slot_t receive_window[RECEIVE_WINDOW_SLOT_SIZE];
+
+  struct ReceiveWindowComparator {
+    bool operator()(const receive_window_slot_t& lhs, const receive_window_slot_t& rhs) const {
+      return before(get_seq((foggy_tcp_header_t*)lhs.msg), get_seq((foggy_tcp_header_t*)rhs.msg));
+    }
+  };
+
+  priority_queue<receive_window_slot_t, vector<receive_window_slot_t>, ReceiveWindowComparator> receive_window;
+
   /* >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> */
 };
 
