@@ -156,7 +156,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
 int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
-  usleep(100); // TODO should have better way to prevent entering this fucntion too early
+  usleep(50); // TODO should have better way to prevent entering this fucntion too early
 
 
   //printf("foggy_close \n");
@@ -171,7 +171,7 @@ int foggy_close(void *in_sock) {
 
 
   while(!after(sock->window.last_ack_received, sock->window.last_byte_sent-1)){ // checking for all byte acked, prevent overflow
-    usleep(100000);
+    usleep(10000);
   }
 
   // while (!has_been_acked(sock, sock->window.last_byte_sent++)) {
@@ -198,7 +198,7 @@ int foggy_close(void *in_sock) {
   int i = 0;
   while (sock->dying == 0) {
     printf("Waiting for FIN-ACK\n");
-    usleep(1000);
+    usleep(100);
     i++;
     if (i == 3) {
       while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
