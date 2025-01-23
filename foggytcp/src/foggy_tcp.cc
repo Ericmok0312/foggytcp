@@ -23,8 +23,14 @@ from releasing their forks in any public places. */
 
 #include "foggy_backend.h"
 #include "foggy_function.h"
+#include "grading.h"
 
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+
+#define debug_printf(fmt, ...)                            \
+  do {                                                    \
+    if (DEBUG_PRINT) fprintf(stdout, fmt, ##__VA_ARGS__); \
+  } while (0)
 
 void* foggy_socket(const foggy_socket_type_t socket_type,
                const char *server_port, const char *server_ip) {
@@ -159,7 +165,7 @@ int foggy_close(void *in_sock) {
   usleep(50); // TODO should have better way to prevent entering this fucntion too early
 
 
-  //printf("foggy_close \n");
+  //debug_printf("foggy_close \n");
   
   // Ensure all data is sent before closing
 
@@ -175,7 +181,7 @@ int foggy_close(void *in_sock) {
   }
 
   // while (!has_been_acked(sock, sock->window.last_byte_sent++)) {
-  //   printf("Blocked here\n");
+  //   debug_printf("Blocked here\n");
   //   usleep(100000);
   // }
 
@@ -197,27 +203,27 @@ int foggy_close(void *in_sock) {
   // Wait for the FIN-ACK from the other side or timeout
   int i = 0;
   while (sock->dying == 0) {
-    printf("Waiting for FIN-ACK\n");
+    debug_printf("Waiting for FIN-ACK\n");
     usleep(100);
     i++;
     if (i == 3) {
       while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
-        printf("Waiting send mutex");
+        debug_printf("Waiting send mutex");
       }
       sock->send_window.clear();
       pthread_mutex_unlock(&(sock->send_lock));
       while(pthread_mutex_lock(&(sock->death_lock)) != 0) {
       }
-      printf("Setting dying to 2, timeout\n");
+      debug_printf("Setting dying to 2, timeout\n");
       sock->dying = 2;
       pthread_mutex_unlock(&(sock->death_lock));
     }
   }
 
-  printf("Closing thread\n");
+  debug_printf("Closing thread\n");
   // Wait for the backend thread to finish
   pthread_join(sock->thread_id, NULL);
-  printf("Thread closed\n");
+  debug_printf("Thread closed\n");
 
   // Clean up resources
   if (sock != NULL) {
@@ -253,10 +259,10 @@ int foggy_read(void* in_sock, void *buf, int length) {
 
   while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
   }
-  printf("Reading bytes\n");
+  debug_printf("Reading bytes\n");
 
   if(sock->received_len == 0 && sock->connected == 4) {
-    while(pthread_mutex_lock(&(sock->death_lock))){
+    while(pthread_mutex_lock(&(sock->death_lock)) != 0){
     }
     sock->dying = 1;
     pthread_mutex_unlock(&(sock->death_lock));

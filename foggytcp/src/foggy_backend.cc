@@ -31,9 +31,15 @@ from releasing their forks in any public places. */
 #include "foggy_function.h"
 #include "foggy_packet.h"
 #include "foggy_tcp.h"
+#include "grading.h"
 
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
+
+#define debug_printf(fmt, ...)                            \
+  do {                                                    \
+    if (DEBUG_PRINT) fprintf(stdout, fmt, ##__VA_ARGS__); \
+  } while (0)
 
 /**
  * Tells if a given sequence number has been acknowledged by the socket.
@@ -117,7 +123,7 @@ void *begin_backend(void *in) {
     death = sock->dying;
     pthread_mutex_unlock(&(sock->death_lock));
 
-    // printf("Backend running, dying %d\n", death);
+    // debug_printf("Backend running, dying %d\n", death);
     while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
     }
     buf_len = sock->sending_len;
@@ -129,13 +135,13 @@ void *begin_backend(void *in) {
 
 
     if (death == 1 && buf_len == 0 && sock->send_window.empty()) { // when the three condition is true, then the socket is destroyed
-      //printf("Socket is dying\n");
+      //debug_printf("Socket is dying\n");
       pthread_mutex_unlock(&(sock->send_lock));
       break;   
     }
 
     if(death == 2){
-      printf("FIN-ACK Timeout\n");
+      debug_printf("FIN-ACK Timeout\n");
       pthread_mutex_unlock(&(sock->send_lock));
       break;
     }
@@ -173,7 +179,7 @@ void *begin_backend(void *in) {
     
 
     if (send_signal) {
-      // printf("signaling\n");
+      // debug_printf("signaling\n");
       pthread_cond_signal(&(sock->wait_cond));
     }
   }
@@ -189,7 +195,7 @@ void foggy_listen(foggy_socket_t *sock) {
     return;
   }
   
-  printf("Listening on port %d\n", ntohs(sock->conn.sin_port));
+  debug_printf("Listening on port %d\n", ntohs(sock->conn.sin_port));
 
   while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
   }
@@ -202,7 +208,7 @@ void foggy_listen(foggy_socket_t *sock) {
 
   pthread_mutex_unlock(&(sock->connected_lock)); // release the lock
 
-  printf("Connection established\n");
+  debug_printf("Connection established\n");
 }
 
 
@@ -213,12 +219,12 @@ void foggy_connect(foggy_socket_t *sock) {
     return;
   }
 
-  printf("Connecting to port %d\n", ntohs(sock->conn.sin_port));
+  debug_printf("Connecting to port %d\n", ntohs(sock->conn.sin_port));
 
   while(pthread_mutex_lock(&(sock->send_lock)) != 0) {  
   }
 
-  printf("Sending SYN packet %d\n", sock->window.last_byte_sent);
+  debug_printf("Sending SYN packet %d\n", sock->window.last_byte_sent);
   
   uint8_t *syn_pkt = create_packet(
                   sock->my_port, ntohs(sock->conn.sin_port),
@@ -243,5 +249,5 @@ void foggy_connect(foggy_socket_t *sock) {
 
   pthread_mutex_unlock(&(sock->connected_lock));
   
-  printf("Connection established\n");
+  debug_printf("Connection established\n");
 }

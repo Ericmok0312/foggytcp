@@ -8,6 +8,11 @@ the express permission of the course staff. Everyone is prohibited
 from releasing their forks in any public places. */
 
 #include "foggy_tcp.h"
+#include <cstring>
+#include <cstdio>
+#include <unistd.h>
+
+
 
 /**
  * Updates the socket information to represent the newly received packet.

@@ -56,10 +56,10 @@ int main(int argc, const char* argv[]) {
      * of the loop */
     int bytes_read = foggy_read(sock, buf, BUF_SIZE);
     if (bytes_read <= 0){
-      // printf("Terminate Bytes read: %d\n", bytes_read);
+      // debug_printf("Terminate Bytes read: %d\n", bytes_read);
       break;
     }
-    // printf("Bytes read: %d\n", bytes_read);
+    // debug_printf("Bytes read: %d\n", bytes_read);
 
     /* Write the data read from the socket into the file. We write exactly
      * bytesRead number of bytes */
@@ -67,7 +67,7 @@ int main(int argc, const char* argv[]) {
   }
 
   /* Close the socket and the output file */
-  // printf("calling foggy_close\n");
+  // debug_printf("calling foggy_close\n");
   foggy_close(sock);
   ofs.close();
 

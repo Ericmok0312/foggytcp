@@ -14,6 +14,10 @@ from releasing their forks in any public places. */
 #ifndef PROJECT_1_ELEC3120_INC_GRADING_H_
 #define PROJECT_1_ELEC3120_INC_GRADING_H_
 
+
+
+#define DEBUG_PRINT 0
+
 /*
  * DO NOT CHANGE THIS FILE
  * This contains the variables for your TCP implementation
@@ -21,13 +25,14 @@ from releasing their forks in any public places. */
  */
 
 // packet lengths
-#define MAX_LEN 1400
+#define MAX_LEN 1400  // original 1400
+
 
 // window variables
-#define WINDOW_INITIAL_WINDOW_SIZE MSS
+#define WINDOW_INITIAL_WINDOW_SIZE MSS * 24  // original MSS
 #define WINDOW_INITIAL_SSTHRESH (MSS * 64)
 #define WINDOW_INITIAL_RTT 3000  // ms
-#define WINDOW_INITIAL_ADVERTISED MSS
+#define WINDOW_INITIAL_ADVERTISED MSS  // original MSS
 
 // Max TCP Buffer
 #define MAX_NETWORK_BUFFER 65535  // (2^16 - 1) bytes

@@ -16,11 +16,10 @@ from releasing their forks in any public places. */
 #include "foggy_backend.h"
 #include <unistd.h>
 #include <thread>
-
+#include "grading.h"
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 
-#define DEBUG_PRINT 1
 #define debug_printf(fmt, ...)                            \
   do {                                                    \
     if (DEBUG_PRINT) fprintf(stdout, fmt, ##__VA_ARGS__); \
@@ -98,7 +97,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
                 (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
           free(fin_ack_pkt);
 
-          printf("Sending FIN-ACK %u\n", get_seq(hdr) + 1);
+          debug_printf("Sending FIN-ACK %u\n", get_seq(hdr) + 1);
 
 
           // Update the state to indicate that the connection is closing
@@ -106,7 +105,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           }
           sock->connected = 4;
           pthread_mutex_unlock(&(sock->connected_lock));
-          printf("Setting connected to 4\n");
+          debug_printf("Setting connected to 4\n");
           break;
       }
       case ACK_FLAG_MASK: {  // NEED TO CHANGE THIS
@@ -124,11 +123,11 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
                   } 
                   sock->dying = 1;
                   pthread_mutex_unlock(&(sock->death_lock));
-                  printf("Receive FIN-ACK %u\n", get_ack(hdr));
+                  debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
                   sock->window.dup_ack_count = 0;
               }
               else{
-                   printf("Receive ACK %u\n", get_ack(hdr));
+                   debug_printf("Receive ACK %u\n", get_ack(hdr));
                    sock->window.dup_ack_count = 0;
               }
           }
@@ -209,7 +208,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
       sock->window.last_byte_sent += payload_len;
     }
   } else if (flags == FIN_FLAG_MASK) {
-    printf("Sending FIN %u\n", sock->window.last_byte_sent);
+    debug_printf("Sending FIN %u\n", sock->window.last_byte_sent);
     send_window_slot_t slot;
     slot.is_sent = 0;
     slot.msg = create_packet(
@@ -318,7 +317,7 @@ void transmit_send_window(foggy_socket_t *sock) {
 
     if (sock->window.window_used + payload_len > sock->window.congestion_window ||
         sock->window.advertised_window < payload_len) {
-          printf("either reach congestion window limit or advertised window limit, values: %u,  %u\n", sock->window.window_used,   sock->window.advertised_window);
+          debug_printf("either reach congestion window limit or advertised window limit, values: %u,  %u\n", sock->window.window_used,   sock->window.advertised_window);
       break;
     }
 
@@ -358,7 +357,7 @@ void receive_send_window(foggy_socket_t *sock) {
       break;
     }
     if (has_been_acked(sock, get_seq(hdr)) == 0) {
-      printf("Seq waiting for ack is %u, but last ack received is %u \n", get_seq(hdr), sock->window.last_ack_received);
+      debug_printf("Seq waiting for ack is %u, but last ack received is %u \n", get_seq(hdr), sock->window.last_ack_received);
       break;
     }
 
@@ -372,7 +371,7 @@ void receive_send_window(foggy_socket_t *sock) {
 void resend(foggy_socket_t *sock){
   send_window_slot_t &packet = sock->send_window.front();
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)packet.msg;
-  printf("Trigger resend, sending seq %d\n", get_seq(hdr));
+  debug_printf("Trigger resend, sending seq %d\n", get_seq(hdr));
   sendto(sock->socket, packet.msg, get_plen(hdr), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
   sock->window.dup_ack_count == 0;
 }
