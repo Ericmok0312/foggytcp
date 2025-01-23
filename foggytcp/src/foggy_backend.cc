@@ -167,11 +167,10 @@ void *begin_backend(void *in) {
 
     send_signal = sock->received_len > 0  || sock->connected == 4;
 
-    pthread_mutex_unlock(&(sock->connected_lock));
-    
     pthread_mutex_unlock(&(sock->recv_lock));
 
-
+    pthread_mutex_unlock(&(sock->connected_lock));
+    
 
     if (send_signal) {
       // printf("signaling\n");
