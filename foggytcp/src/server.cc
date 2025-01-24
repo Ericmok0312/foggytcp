@@ -14,7 +14,14 @@
 using namespace std;
 
 #include "foggy_tcp.h"
+#include "grading.h"
 
+
+#define debug_printf(fmt, ...)                            \
+  do {                                                    \
+    if (DEBUG_PRINT) fprintf(stdout, fmt, ##__VA_ARGS__); \
+  } while (0)
+  
 #define BUF_SIZE 4096
 
 /**
@@ -56,10 +63,10 @@ int main(int argc, const char* argv[]) {
      * of the loop */
     int bytes_read = foggy_read(sock, buf, BUF_SIZE);
     if (bytes_read <= 0){
-      // debug_printf("Terminate Bytes read: %d\n", bytes_read);
+      debug_printf("Terminate Bytes read: %d\n", bytes_read);
       break;
     }
-    // debug_printf("Bytes read: %d\n", bytes_read);
+    debug_printf("Bytes read: %d\n", bytes_read);
 
     /* Write the data read from the socket into the file. We write exactly
      * bytesRead number of bytes */

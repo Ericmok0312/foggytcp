@@ -48,3 +48,7 @@ void transmit_send_window(foggy_socket_t *sock);
 void receive_send_window(foggy_socket_t *sock);
 
 void resend(foggy_socket_t *sock);
+
+void reset_time_out(foggy_socket_t* sock);
+
+bool check_time_out(foggy_socket_t* sock);

@@ -202,9 +202,18 @@ void foggy_listen(foggy_socket_t *sock) {
 
   while (sock->connected != 2) {
     check_for_pkt(sock, NO_FLAG);
-  }
+    if(check_time_out(sock)){
+        sock->window.next_seq_expected = 0;
 
-  sock->window.last_byte_sent++; // update the last byte sent
+        sock->connected = 0; // reset handshake
+
+        sock->window.advertised_window = WINDOW_INITIAL_ADVERTISED; // updating advertised wi
+
+        sock->window.last_byte_sent--;
+
+        sock->window.timeout_timer = time(nullptr);
+    }
+  }
 
   pthread_mutex_unlock(&(sock->connected_lock)); // release the lock
 
@@ -221,8 +230,8 @@ void foggy_connect(foggy_socket_t *sock) {
 
   debug_printf("Connecting to port %d\n", ntohs(sock->conn.sin_port));
 
-  while(pthread_mutex_lock(&(sock->send_lock)) != 0) {  
-  }
+  // while(pthread_mutex_lock(&(sock->send_lock)) != 0) {  
+  // }
 
   debug_printf("Sending SYN packet %d\n", sock->window.last_byte_sent);
   
@@ -236,15 +245,26 @@ void foggy_connect(foggy_socket_t *sock) {
   sendto(sock->socket, syn_pkt, sizeof(foggy_tcp_header_t), 0,
                     (struct sockaddr *)&(sock->conn), sizeof(sock->conn)); // sending syn packet, currently no timeout
 
-  free(syn_pkt); // prevent leakage
+  
 
-  pthread_mutex_unlock(&(sock->send_lock)); // release the lock
+  reset_time_out(sock);
+  // pthread_mutex_unlock(&(sock->send_lock)); // release the lock
 
   while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
   }
+
+
   while (sock->connected != 2) {
     check_for_pkt(sock, NO_FLAG);
+    if(check_time_out(sock)){
+      sendto(sock->socket, syn_pkt, sizeof(foggy_tcp_header_t), 0,
+                    (struct sockaddr *)&(sock->conn), sizeof(sock->conn)); // sending syn packet, currently no timeout
+      reset_time_out(sock);
+    }
   }
+
+  free(syn_pkt); // prevent leakage
+
   sock->window.last_byte_sent++; // update the last byte sent
 
   pthread_mutex_unlock(&(sock->connected_lock));

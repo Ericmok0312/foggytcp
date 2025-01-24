@@ -33,7 +33,7 @@ using namespace std;
 #define EXIT_FAILURE 1
 
 /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
-#define RECEIVE_WINDOW_SLOT_SIZE 64
+#define RECEIVE_WINDOW_SLOT_SIZE 128
 
 
 #define TIMEOUT_SECONDS 1
@@ -75,16 +75,19 @@ typedef struct {
 
   uint32_t ssthresh;
   uint32_t advertised_window;
-  uint32_t congestion_window;
+  uint32_t congestion_window; // for congestion control
 
   uint32_t window_used;
   int32_t last_sent_pos;
 
-  // uint32_t receive_window_start_ptr;
-  // uint32_t receive_window_end_ptr;
+  uint32_t receive_window_start_ptr;
+  uint32_t receive_window_end_ptr;
+
+  time_t timeout_timer;
 
   reno_state_t reno_state;
   pthread_mutex_t ack_lock;
+
 } window_t;
 
 /**
@@ -115,13 +118,20 @@ struct foggy_socket_t {
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;
 
+
+  receive_window_slot_t receive_window[RECEIVE_WINDOW_SLOT_SIZE];
+
+
+
   struct ReceiveWindowComparator {
     bool operator()(const receive_window_slot_t& lhs, const receive_window_slot_t& rhs) const {
       return before(get_seq((foggy_tcp_header_t*)lhs.msg), get_seq((foggy_tcp_header_t*)rhs.msg));
     }
   };
 
-  priority_queue<receive_window_slot_t, vector<receive_window_slot_t>, ReceiveWindowComparator> receive_window;
+  priority_queue<receive_window_slot_t, vector<receive_window_slot_t>, ReceiveWindowComparator> not_sequential_receive_window;
+
+  
 
   /* >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> */
 };
