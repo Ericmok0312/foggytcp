@@ -13,7 +13,7 @@ from releasing their forks in any public places. */
 #include <unistd.h>
 
 
-
+#define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
 /**
  * Updates the socket information to represent the newly received packet.
  *

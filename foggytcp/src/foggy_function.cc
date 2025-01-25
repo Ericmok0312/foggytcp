@@ -109,9 +109,22 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           // Update the state to indicate that the connection is closing
           while (pthread_mutex_lock(&(sock->connected_lock)) != 0) {
           }
-          sock->connected = 4;
+            sock->connected = 4;
+            debug_printf("Setting connected to 4\n");
+          
+
+          while (pthread_mutex_lock(&(sock->death_lock)) != 0){
+            debug_printf("Waiting for death lock\n");
+          }
+          if(sock->dying == 3){ // client receiving FIN-ACK from server
+            sock->dying = 2;  // entering the stage for counting down
+            reset_time_out(sock);
+            debug_printf("Setting dying to 2\n");
+            debug_printf("Setting terminate socket timer to %ld \n", sock->window.timeout_timer);
+          }
+          pthread_mutex_unlock(&(sock->death_lock));
           pthread_mutex_unlock(&(sock->connected_lock));
-          debug_printf("Setting connected to 4\n");
+
           break;
       }
       case ACK_FLAG_MASK: {  // NEED TO CHANGE THIS
@@ -126,19 +139,18 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           if (after(ack, sock->window.last_ack_received)) { 
               sock->window.last_ack_received = ack;                           
               if(sock->connected == 3) {
-                  while(pthread_mutex_lock(&(sock->death_lock)) != 0){      
+                  while(pthread_mutex_lock(&(sock->death_lock)) != 0){
                   } 
-                  sock->dying = 1;
+                  sock->dying = 3; // dying 3, indicating the state for only receiving packets
                   pthread_mutex_unlock(&(sock->death_lock));
                   debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
+                  sock->window.timeout_timer = time(nullptr);
                   sock->window.dup_ack_count = 0;
-  
               }
               else{
                   debug_printf("Receive ACK %u\n", get_ack(hdr));
                   sock->window.dup_ack_count = 0;
               }
-              
           }
           else if (ack==sock->window.last_ack_received){
             if(!sock->send_window.empty()){
@@ -146,8 +158,13 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               debug_printf("Duplicate ACK +1\n");
             }
             if(sock->window.dup_ack_count == 3){
+              debug_printf("Duplicate ACK for 3 Times\n");
               resend(sock);
             }
+          }
+          else{
+            pthread_mutex_unlock(&(sock->window.ack_lock));
+            //return;
           }
           pthread_mutex_unlock(&(sock->window.ack_lock));
           if(sock->connected == 1) {
@@ -161,6 +178,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
                           get_seq(hdr) + get_payload_len(pkt));
 
               sock->window.advertised_window = get_advertised_window(hdr);
+              debug_printf("Setting advertised_window to %ld\n", sock->window.advertised_window);
               // Add the packet to receive window and process receive window
               add_receive_window(sock, pkt); 
               process_receive_window(sock);
@@ -218,7 +236,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
       sock->window.last_byte_sent += payload_len;
     }
   } else if (flags == FIN_FLAG_MASK) {
-    debug_printf("Sending FIN %u\n", sock->window.last_byte_sent);
+
     send_window_slot_t slot;
     slot.is_sent = 0;
     slot.msg = create_packet(
@@ -228,18 +246,24 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
         FIN_FLAG_MASK,
         MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
         NULL, 0);
+
     sock->send_window.push_back(slot);
+    //sendto(sock->socket, slot.msg, get_plen((foggy_tcp_header_t*)slot.msg), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
     sock->window.last_byte_sent += 1;
     while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
+      debug_printf("waiting connected_lock\n");
     }
-    sock->connected = 3;
+    if(sock->connected != 4){
+      sock->connected = 3;
+    }
+    // else{
+    //   sock->dying = 1;
+    // }
     pthread_mutex_unlock(&(sock->connected_lock));
+    debug_printf("Sending FIN %u\n", sock->window.last_byte_sent);
   }
-
   receive_send_window(sock);
 }
-
-
 
 
 
@@ -250,8 +274,11 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
 
   // Check if the packet is within the receive window
   if (p_seq < sock->window.next_seq_expected || p_end > sock->window.next_seq_expected + MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS)) {
+    debug_printf("Packets not in receive window seq: %d\n", p_seq);
     return; // packet not in receive window
   }
+
+  sock->window.received_pkt.insert(p_seq);
 
   // Handle in-order packet
   if (p_seq == sock->window.next_seq_expected) {
@@ -262,96 +289,258 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
       memcpy(cur_slot->msg, pkt, get_plen(hdr));
       sock->window.receive_window_end_ptr = (sock->window.receive_window_end_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
     } else {
-      debug_printf("Error: Slot already used for in-order packet.\n");
+      debug_printf("Error: Slot already used for in-order packet. Process_receive_window efficiency not enough\n");
+      receive_window_slot_t temp;
+      temp.msg = (uint8_t*) malloc(get_plen(hdr));
+      temp.is_used = 1;
+      memcpy(temp.msg, pkt, get_plen(hdr));
+      sock->out_of_order_queue[p_seq] = temp.msg;
     }
-  } 
-  else { // Handle out-of-order packet
+
+    uint32_t cur_recv = sock->window.next_seq_expected + get_payload_len(pkt);
+    uint8_t* non_seq_slot = nullptr;
+    while (!sock->out_of_order_queue.empty()) {
+      cur_slot = &(sock->receive_window[sock->window.receive_window_end_ptr]);
+      non_seq_slot = sock->out_of_order_queue.begin()->second;
+      uint32_t seq = sock->out_of_order_queue.begin()->first;
+      uint16_t payload_len = get_payload_len(non_seq_slot);
+      if (cur_slot->is_used == 0) {
+        if(seq == cur_recv){
+          cur_slot->is_used = 1;
+          cur_slot->msg = non_seq_slot;
+          cur_recv += payload_len;
+          sock->window.receive_window_end_ptr = (sock->window.receive_window_end_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
+        } else {
+          debug_printf("Duplicate packet received\n");
+        }
+      } else {
+        debug_printf("Error: Slot already used for in-order packet. Process_receive_window efficiency not enough\n");
+        break;
+      }
+      sock->out_of_order_queue.erase(seq);
+    }
+  } else { // Handle out-of-order packet
+    debug_printf("Non-sequential packet seq: %d\n", p_seq);
     receive_window_slot_t temp;
     temp.msg = (uint8_t*) malloc(get_plen(hdr));
     temp.is_used = 1;
     memcpy(temp.msg, pkt, get_plen(hdr));
-    sock->not_sequential_receive_window.push(std::move(temp));
+    sock->out_of_order_queue[p_seq] = temp.msg;
   }
+
+  debug_printf("Number of packets in seq receive window and in non seq window : %d, %d\n", (sock->window.receive_window_end_ptr - sock->window.receive_window_start_ptr + RECEIVE_WINDOW_SLOT_SIZE) % RECEIVE_WINDOW_SLOT_SIZE, sock->out_of_order_queue.size());
 }
 
 void process_receive_window(foggy_socket_t *sock) {
-  // Stop-and-wait implementation.
-  // Only process the first packet in the window.
-
   receive_window_slot_t* cur_slot = nullptr;
 
-  //*work*
-  while(true){
+  while (true) {
     cur_slot = &(sock->receive_window[sock->window.receive_window_start_ptr]);
 
-    if(cur_slot->is_used == 0 || cur_slot->msg == nullptr) return;
-    
-    foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
-    // Discard unexpected packet
-    if (get_seq(hdr) != sock->window.next_seq_expected) {
-          // Process any buffered out-of-order packets that can now be processed
-      const receive_window_slot_t* non_seq_slot = nullptr;
-      while (!sock->not_sequential_receive_window.empty() && get_seq((foggy_tcp_header_t*)sock->not_sequential_receive_window.top().msg) == sock->window.next_seq_expected) {
-        non_seq_slot = &(sock->not_sequential_receive_window.top());
-        uint16_t payload_len = get_payload_len(non_seq_slot->msg);
-        sock->window.next_seq_expected += payload_len;
-        // Copy to received_buf
-        sock->received_buf = (uint8_t*)
-            realloc(sock->received_buf, sock->received_len + payload_len);
+    if (cur_slot->is_used == 0) return;
 
-        memcpy(sock->received_buf + sock->received_len, get_payload(non_seq_slot->msg),
-                payload_len);
-                
-        sock->received_len += payload_len;
-        // Free the slot
-        free(non_seq_slot->msg);
-        sock->not_sequential_receive_window.pop();
-        }
+    foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
+    if (get_seq(hdr) != sock->window.next_seq_expected) {
       return;
     }
-    // Update next seq number expected
+
     uint16_t payload_len = get_payload_len(cur_slot->msg);
     sock->window.next_seq_expected += payload_len;
-    // Copy to received_buf
-    sock->received_buf = (uint8_t*)
-        realloc(sock->received_buf, sock->received_len + payload_len);
 
-    memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
-            payload_len);
-            
+    debug_printf("Setting next_seq_expected to: %ld\n", sock->window.next_seq_expected);
+
+    sock->received_buf = (uint8_t*) realloc(sock->received_buf, sock->received_len + payload_len);
+    memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg), payload_len);
     sock->received_len += payload_len;
-    // Free the slot
-    free(cur_slot->msg); 
+
+    sock->window.received_pkt.erase(get_seq(hdr));
+    free(cur_slot->msg);
     cur_slot->msg = nullptr;
     cur_slot->is_used = 0;
-     
+
     sock->window.receive_window_start_ptr = (sock->window.receive_window_start_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
 
-    if(sock->window.receive_window_start_ptr == sock->window.receive_window_end_ptr){
+    while (!sock->out_of_order_queue.empty()) {
+      uint32_t seq = sock->out_of_order_queue.begin()->first;
+      if (seq == sock->window.next_seq_expected) {
+        uint8_t* non_seq_slot = sock->out_of_order_queue.begin()->second;
+        uint16_t payload_len = get_payload_len(non_seq_slot);
+        sock->received_buf = (uint8_t*) realloc(sock->received_buf, sock->received_len + payload_len);
+        memcpy(sock->received_buf + sock->received_len, get_payload(non_seq_slot), payload_len);
+        sock->received_len += payload_len;
+        sock->window.next_seq_expected += payload_len;
+        free(non_seq_slot);
+        sock->out_of_order_queue.erase(seq);
+      } else {
+        break;
+      }
+    }
+
+    if (sock->window.receive_window_start_ptr == sock->window.receive_window_end_ptr) {
       break;
     }
   }
-  //*work*
-
-  // if (cur_slot->is_used != 0) {
-  //   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
-  //   // Discard unexpected packet
-  //   if (get_seq(hdr) != sock->window.next_seq_expected) return;
-  //   // Update next seq number expected
-  //   uint16_t payload_len = get_payload_len(cur_slot->msg);
-  //   sock->window.next_seq_expected += payload_len;
-  //   // Copy to received_buf
-  //   sock->received_buf = (uint8_t*)
-  //       realloc(sock->received_buf, sock->received_len + payload_len);
-  //   memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
-  //          payload_len);
-  //   sock->received_len += payload_len;
-  //   // Free the slot
-  //   cur_slot->is_used = 0;
-  //   free(cur_slot->msg);
-  //   cur_slot->msg = NULL;
-  // }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+// void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
+//   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)pkt;
+//   uint32_t p_seq = get_seq(hdr);
+//   uint32_t p_end = p_seq + get_payload_len(pkt);
+
+//   // Check if the packet is within the receive window
+//   if (p_seq < sock->window.next_seq_expected || p_end > sock->window.next_seq_expected + MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS)) {
+//     debug_printf("Packets not in receive window seq: %d\n", p_seq);
+//     return; // packet not in receive window
+//   }
+
+//   // if(sock->window.received_pkt.find(p_seq) != sock->window.received_pkt.end()){
+//   //   debug_printf("Receive duplicate packets timeout too fast\n");
+//   //   return;
+//   // }
+
+//   sock->window.received_pkt.insert(p_seq);
+//   // if(sock->window.received_pkt.find(get_seq((foggy_tcp_header_t*) pkt)) != sock->window.received_pkt.end()){
+//   //   return;
+//   // }
+  
+//   // sock->window.received_pkt.insert(get_seq((foggy_tcp_header_t*) pkt));
+
+//   // Handle in-order packet
+//   if (p_seq == sock->window.next_seq_expected) {
+//     receive_window_slot_t *cur_slot = &(sock->receive_window[sock->window.receive_window_end_ptr]);
+//     if (cur_slot->is_used == 0) {
+//       cur_slot->is_used = 1;
+//       cur_slot->msg = (uint8_t*) malloc(get_plen(hdr));
+//       memcpy(cur_slot->msg, pkt, get_plen(hdr));
+//       sock->window.receive_window_end_ptr = (sock->window.receive_window_end_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
+//     } 
+//     else {
+//       debug_printf("Error: Slot already used for in-order packet. Process_receive_window efficiency not enough\n");
+//       receive_window_slot_t temp;
+//       temp.msg = (uint8_t*) malloc(get_plen(hdr));
+//       temp.is_used = 1;
+//       memcpy(temp.msg, pkt, get_plen(hdr));
+//       //sock->not_sequential_receive_window.push(std::move(temp));
+//       sock->out_of_order_queue[p_seq] = temp.msg;
+//     }
+
+//     uint32_t cur_recv = sock->window.next_seq_expected + get_payload_len(pkt);
+//     uint8_t* non_seq_slot = nullptr;
+//     while (!sock->out_of_order_queue.empty()) {
+//       cur_slot = &(sock->receive_window[sock->window.receive_window_end_ptr]);
+//       non_seq_slot = sock->out_of_order_queue.begin()->second;
+//       uint32_t seq = sock->out_of_order_queue.begin()->first;
+//       uint16_t payload_len = get_payload_len(non_seq_slot);
+//       if (cur_slot->is_used == 0) {
+//         if(seq == cur_recv){
+//           cur_slot->is_used = 1;
+//           cur_slot->msg = non_seq_slot;
+//           cur_recv += payload_len;
+//           sock->window.receive_window_end_ptr = (sock->window.receive_window_end_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
+//         }
+//         else{
+//           debug_printf("Duplicate packet received\n");
+//         }
+//       } 
+//       else {
+//         debug_printf("Error: Slot already used for in-order packet. Process_receive_window efficiency not enough\n");
+//         break;
+//       }
+//       sock->out_of_order_queue.erase(seq);
+//     }
+//   } 
+//   else { // Handle out-of-order packet
+//     debug_printf("Non-sequential packet seq: %d\n", p_seq);
+//     receive_window_slot_t temp;
+//     temp.msg = (uint8_t*) malloc(get_plen(hdr));
+//     temp.is_used = 1;
+//     memcpy(temp.msg, pkt, get_plen(hdr));
+//     sock->not_sequential_receive_window.push(std::move(temp));
+//   }
+
+//   debug_printf("Number of packets in seq receive window and in non seq window : %d, %d\n", (sock->window.receive_window_end_ptr - sock->window.receive_window_start_ptr + RECEIVE_WINDOW_SLOT_SIZE) % RECEIVE_WINDOW_SLOT_SIZE, sock->not_sequential_receive_window.size());
+// }
+
+// void process_receive_window(foggy_socket_t *sock) {
+//   // Stop-and-wait implementation.
+//   // Only process the first packet in the window.
+
+//   receive_window_slot_t* cur_slot = nullptr;
+
+//   //*work*
+//   while(true){
+//     cur_slot = &(sock->receive_window[sock->window.receive_window_start_ptr]);
+
+//     if(cur_slot->is_used == 0) return;
+    
+//     foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
+//     // Discard unexpected packet
+//     if (get_seq(hdr) != sock->window.next_seq_expected) {
+//           // Process any buffered out-of-order packets that can now be processed
+//       return;
+//     }
+//     // Update next seq number expected
+//     uint16_t payload_len = get_payload_len(cur_slot->msg);
+//     sock->window.next_seq_expected += payload_len;
+
+//     debug_printf("Setting next_seq_expected to: %ld\n", sock->window.next_seq_expected);
+
+//     // Copy to received_buf
+//     sock->received_buf = (uint8_t*)
+//         realloc(sock->received_buf, sock->received_len + payload_len);
+
+//     memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
+//             payload_len);
+            
+//     sock->received_len += payload_len;
+
+//     // sock->window.received_pkt.erase(get_seq(hdr));
+//     // Free the slot
+//     sock->window.received_pkt.erase(get_seq(hdr));
+//     free(cur_slot->msg); 
+//     cur_slot->msg = nullptr;
+//     cur_slot->is_used = 0;
+     
+//     sock->window.receive_window_start_ptr = (sock->window.receive_window_start_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
+   
+//     // WORK
+//     if(sock->window.receive_window_start_ptr == sock->window.receive_window_end_ptr){
+//       break;
+//     }
+//   }
+//   //*work*
+
+//   // if (cur_slot->is_used != 0) {
+//   //   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
+//   //   // Discard unexpected packet
+//   //   if (get_seq(hdr) != sock->window.next_seq_expected) return;
+//   //   // Update next seq number expected
+//   //   uint16_t payload_len = get_payload_len(cur_slot->msg);
+//   //   sock->window.next_seq_expected += payload_len;
+//   //   // Copy to received_buf
+//   //   sock->received_buf = (uint8_t*)
+//   //       realloc(sock->received_buf, sock->received_len + payload_len);
+//   //   memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
+//   //          payload_len);
+//   //   sock->received_len += payload_len;
+//   //   // Free the slot
+//   //   cur_slot->is_used = 0;
+//   //   free(cur_slot->msg);
+//   //   cur_slot->msg = NULL;
+//   // }
+// }
 
 //TODO: implement sliding window
 
@@ -360,15 +549,6 @@ void transmit_send_window(foggy_socket_t *sock) {
   if (sock->send_window.empty() || sock->window.last_sent_pos == sock->send_window.size() - 1) {
     return;
   }
-
-  // Timeout resend
-  if (check_time_out(sock)) {
-    debug_printf("Timeout reached, resending packet %u\n", get_seq((foggy_tcp_header_t*)sock->send_window.front().msg));
-    resend(sock);
-    return;
-  }
-
-  int debug_count = 0;
 
   // Process the send window
   while (true) {
@@ -380,8 +560,6 @@ void transmit_send_window(foggy_socket_t *sock) {
           //debug_printf("either reach congestion window limit or advertised window limit, values: %u,  %u\n", sock->window.window_used,   sock->window.advertised_window);
       break;
     }
-
-    debug_count++;
 
     // Update the window used size and advertised window size
     sock->window.window_used += payload_len;
@@ -406,17 +584,25 @@ void transmit_send_window(foggy_socket_t *sock) {
     }
   }
 
-  if(debug_count){
-    //debug_printf("# Packets in send window but not send: %d \n", debug_count);
-  }
+
+  debug_printf("# Packets in send window %d\n", sock->window.last_sent_pos+1);
+  
 
 }
 
 
 void receive_send_window(foggy_socket_t *sock) {
 
-  // Pop out the packets that have been ACKed
+  // Timeout resend
+  if (check_time_out(sock)) {
+    debug_printf("Timeout reached, resending packet %u\n", get_seq((foggy_tcp_header_t*)sock->send_window.front().msg));
+    resend(sock);
+    return;
+  }
+  
 
+  // Pop out the packets that have been ACKed
+  bool checked = false;
   while (1) {
     if (sock->send_window.empty()) break;
 
@@ -428,7 +614,6 @@ void receive_send_window(foggy_socket_t *sock) {
     }
     if (has_been_acked(sock, get_seq(hdr)) == 0) {
       //debug_printf("Seq waiting for ack is %u, but last ack received is %u , duplicate ACK count value: %d\n", get_seq(hdr), sock->window.last_ack_received, sock->window.dup_ack_count);
-      
       break;
     }
 
@@ -436,7 +621,14 @@ void receive_send_window(foggy_socket_t *sock) {
     sock->window.last_sent_pos--;
     sock->window.window_used -= get_payload_len(slot.msg);
     free(slot.msg);
+    checked = true;
   }
+
+  if(checked){
+    reset_time_out(sock);
+  }
+
+  //debug_printf("packets waiting for ACK %d \n", sock->window.last_sent_pos+1);
 }
 
 void resend(foggy_socket_t *sock){
@@ -452,17 +644,19 @@ void reset_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
   auto new_time = now + std::chrono::seconds(TIMEOUT_SECONDS);
   sock->window.timeout_timer = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
+  debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
 }
 
 bool check_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
   time_t current_time = std::chrono::system_clock::to_time_t(now);
-
-  if(sock->window.timeout_timer <= current_time){
+  if(sock->window.timeout_timer <= current_time && sock->window.timeout_timer != time(nullptr)){
+    debug_printf("Time out \n");
     return true;
   }
   else{
     return false;
   }
-  // return false;
+  //return false;
 }
+

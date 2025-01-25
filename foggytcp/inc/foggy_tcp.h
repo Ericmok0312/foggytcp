@@ -21,9 +21,12 @@ from releasing their forks in any public places. */
 #include <time.h>
 #include <deque>
 #include <queue>
+#include <map>
+#include <unordered_set>
 
 #include "foggy_packet.h"
 #include "grading.h"
+
 
 
 using namespace std;
@@ -33,10 +36,10 @@ using namespace std;
 #define EXIT_FAILURE 1
 
 /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
-#define RECEIVE_WINDOW_SLOT_SIZE 128
+#define RECEIVE_WINDOW_SLOT_SIZE 64
 
 
-#define TIMEOUT_SECONDS 1
+#define TIMEOUT_SECONDS 5
 
 typedef enum {
   RENO_SLOW_START = 0,
@@ -88,6 +91,7 @@ typedef struct {
   reno_state_t reno_state;
   pthread_mutex_t ack_lock;
 
+  unordered_set<uint32_t> received_pkt;
 } window_t;
 
 /**
@@ -117,7 +121,7 @@ struct foggy_socket_t {
   
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;
-
+  map<uint32_t, uint8_t*> out_of_order_queue;
 
   receive_window_slot_t receive_window[RECEIVE_WINDOW_SLOT_SIZE];
 

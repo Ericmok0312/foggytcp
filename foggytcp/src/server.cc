@@ -71,6 +71,7 @@ int main(int argc, const char* argv[]) {
     /* Write the data read from the socket into the file. We write exactly
      * bytesRead number of bytes */
     ofs.write((char*)buf, bytes_read);
+    //usleep(1000);
   }
 
   /* Close the socket and the output file */

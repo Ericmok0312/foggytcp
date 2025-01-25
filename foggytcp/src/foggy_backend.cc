@@ -115,17 +115,69 @@ void *begin_backend(void *in) {
   foggy_socket_t *sock = (foggy_socket_t *)in;
   int death, buf_len, send_signal;
   uint8_t *data;
-
   while (1) {
-
+    debug_printf("Current states connected: %d, death: %d \n", sock->connected, sock->dying);
     while (pthread_mutex_lock(&(sock->death_lock)) != 0) {
     }
     death = sock->dying;
+
     pthread_mutex_unlock(&(sock->death_lock));
+    
+    
+
+
+    while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
+      debug_printf("waiting for conn lock\n");
+    }
+
+
+    if(sock->connected == 3 && death == 3){ // in the stage of waiting for FIN
+      // if(sock->type == TCP_INITIATOR){
+      //   sock->dying = 2;
+      //   pthread_mutex_unlock(&(sock->connected_lock));
+      //   continue;
+      // }
+      debug_printf("WAITING FOR FIN\n");
+      pthread_mutex_unlock(&(sock->connected_lock));
+      check_for_pkt(sock, NO_WAIT);
+      continue;
+    }
+
+    pthread_mutex_unlock(&(sock->connected_lock));
+
 
     // debug_printf("Backend running, dying %d\n", death);
     while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
     }
+
+    if(death == 2){  // counting down for dying
+      //debug_printf("Waiting for countdown timer\n");
+      if (check_time_out(sock)){
+        debug_printf("Timer reached, closing socket\n");
+        while(pthread_mutex_lock(&(sock->death_lock))!=0){
+
+        }
+        sock->dying = 1;
+        pthread_mutex_unlock(&(sock->death_lock));
+        pthread_mutex_unlock(&(sock->send_lock));
+        continue;
+      }
+      else{
+        pthread_mutex_unlock(&(sock->send_lock));
+        continue;
+      }    
+
+    }
+
+    if(death == 3){
+      debug_printf("Waiting for FIN of otherside\n");
+      pthread_mutex_unlock(&(sock->send_lock));
+      send_pkts(sock, NULL, 0);
+      check_for_pkt(sock, NO_WAIT);
+      continue;
+    }
+
+
     buf_len = sock->sending_len;
 
     if (!sock->send_window.empty()) {
@@ -140,11 +192,7 @@ void *begin_backend(void *in) {
       break;   
     }
 
-    if(death == 2){
-      debug_printf("FIN-ACK Timeout\n");
-      pthread_mutex_unlock(&(sock->send_lock));
-      break;
-    }
+
 
     // Normal Work Flows
     if (buf_len > 0) {  // something in the data to send

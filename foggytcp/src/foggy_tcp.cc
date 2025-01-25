@@ -167,7 +167,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
 int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
-  usleep(50); // TODO should have better way to prevent entering this fucntion too early
+  usleep(1000); // TODO should have better way to prevent entering this fucntion too early
 
 
   //debug_printf("foggy_close \n");
@@ -182,7 +182,7 @@ int foggy_close(void *in_sock) {
 
 
   while(!after(sock->window.last_ack_received, sock->window.last_byte_sent-1)){ // checking for all byte acked, prevent overflow
-    usleep(10000);
+    usleep(5000);
   }
 
   // while (!has_been_acked(sock, sock->window.last_byte_sent++)) {
@@ -199,30 +199,40 @@ int foggy_close(void *in_sock) {
   while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
   }
   
-  send_pkts(sock, NULL, 0, FIN_FLAG_MASK);
+  send_pkts(sock, NULL, 0, FIN_FLAG_MASK); // which will set connected to 3
 
   pthread_mutex_unlock(&(sock->send_lock));
 
-
-
   // Wait for the FIN-ACK from the other side or timeout
-  int i = 0;
-  while (sock->dying == 0) {
-    debug_printf("Waiting for FIN-ACK\n");
-    usleep(100);
-    i++;
-    if (i == 3) {
-      while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
-        debug_printf("Waiting send mutex");
-      }
-      sock->send_window.clear();
-      pthread_mutex_unlock(&(sock->send_lock));
-      while(pthread_mutex_lock(&(sock->death_lock)) != 0) {
-      }
-      debug_printf("Setting dying to 2, timeout\n");
-      sock->dying = 2;
-      pthread_mutex_unlock(&(sock->death_lock));
+  // int i = 0;
+  // while (sock->dying == 0) {
+  //   debug_printf("Waiting for FIN-ACK\n");
+  //   usleep(100);
+  //   i++;
+  //   if (check_time_out(sock)) {
+  //     // while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
+  //     //   debug_printf("Waiting send mutex");
+  //     // }
+  //     // sock->send_window.clear();
+  //     // pthread_mutex_unlock(&(sock->send_lock));
+  //     // while(pthread_mutex_lock(&(sock->death_lock)) != 0) {
+  //     // }
+  //     debug_printf("timeout\n");
+  //     // sock->dying = 2;
+  //     send_pkts(sock, NULL, 0, FIN_FLAG_MASK);
+  //     // pthread_mutex_unlock(&(sock->death_lock));
+  //   }
+  // }
+
+  if(sock->received_len == 0 && sock->connected == 4) {
+    while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
     }
+    sock->connected = 3;
+    pthread_mutex_unlock(&(sock->connected_lock));
+  }
+
+  while(sock->dying != 1){
+    usleep(1000);
   }
 
   debug_printf("Closing thread\n");
@@ -262,16 +272,16 @@ int foggy_read(void* in_sock, void *buf, int length) {
     return EXIT_ERROR;
   }
 
-  while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
-  }
+  // while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
+  // }
   //debug_printf("Reading bytes\n");
 
-  if(sock->received_len == 0 && sock->connected == 4) {
-    while(pthread_mutex_lock(&(sock->death_lock)) != 0){
-    }
-    sock->dying = 1;
-    pthread_mutex_unlock(&(sock->death_lock));
-  }
+  // if(sock->received_len == 0 && sock->connected == 3) {
+  //   while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+  //   }
+  //   sock->dying = 1;
+  //   pthread_mutex_unlock(&(sock->death_lock));
+  // }
 
   while (sock->received_len == 0 && sock->connected != 4) {
     pthread_cond_wait(&(sock->wait_cond), &(sock->recv_lock));
@@ -296,7 +306,7 @@ int foggy_read(void* in_sock, void *buf, int length) {
       sock->received_len = 0;
     }
   }
-  pthread_mutex_unlock(&(sock->recv_lock));
+  //pthread_mutex_unlock(&(sock->recv_lock));
   return read_len;
 }
 
