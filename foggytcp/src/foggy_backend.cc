@@ -126,24 +126,24 @@ void *begin_backend(void *in) {
     
 
 
-    while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
-      debug_printf("waiting for conn lock\n");
-    }
+    // while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
+    //   debug_printf("waiting for conn lock\n");
+    // }
 
 
-    if(sock->connected == 3 && death == 3){ // in the stage of waiting for FIN
-      // if(sock->type == TCP_INITIATOR){
-      //   sock->dying = 2;
-      //   pthread_mutex_unlock(&(sock->connected_lock));
-      //   continue;
-      // }
-      debug_printf("WAITING FOR FIN\n");
-      pthread_mutex_unlock(&(sock->connected_lock));
-      check_for_pkt(sock, NO_WAIT);
-      continue;
-    }
+    // if(sock->connected == 3 && death != 3){ // in the stage of waiting for FIN
+    //   // if(sock->type == TCP_INITIATOR){
+    //   //   sock->dying = 2;
+    //   //   pthread_mutex_unlock(&(sock->connected_lock));
+    //   //   continue;
+    //   // }
+    //   debug_printf("WAITING FOR FIN\n");
+    //   pthread_mutex_unlock(&(sock->connected_lock));
+    //   check_for_pkt(sock, NO_WAIT);
+    //   continue;
+    // }
 
-    pthread_mutex_unlock(&(sock->connected_lock));
+    // pthread_mutex_unlock(&(sock->connected_lock));
 
 
     // debug_printf("Backend running, dying %d\n", death);
