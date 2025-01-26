@@ -184,14 +184,6 @@ int foggy_close(void *in_sock) {
   while(!after(sock->window.last_ack_received, sock->window.last_byte_sent-1)){ // checking for all byte acked, prevent overflow
     usleep(5000);
   }
-
-  // while (!has_been_acked(sock, sock->window.last_byte_sent++)) {
-  //   debug_printf("Blocked here\n");
-  //   usleep(100000);
-  // }
-
-
-  // Gracefully close the connection
  
   
   // Send FIN packet to the other side
@@ -206,37 +198,13 @@ int foggy_close(void *in_sock) {
   debug_printf("sended fin in close foggy\n");
   pthread_mutex_unlock(&(sock->send_lock));
 
-  // Wait for the FIN-ACK from the other side or timeout
-  // int i = 0;
-  // while (sock->dying == 0) {
-  //   debug_printf("Waiting for FIN-ACK\n");
-  //   usleep(100);
-  //   i++;
-  //   if (check_time_out(sock)) {
-  //     // while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
-  //     //   debug_printf("Waiting send mutex");
-  //     // }
-  //     // sock->send_window.clear();
-  //     // pthread_mutex_unlock(&(sock->send_lock));
-  //     // while(pthread_mutex_lock(&(sock->death_lock)) != 0) {
-  //     // }
-  //     debug_printf("timeout\n");
-  //     // sock->dying = 2;
-  //     send_pkts(sock, NULL, 0, FIN_FLAG_MASK);
-  //     // pthread_mutex_unlock(&(sock->death_lock));
-  //   }
-  // }
+  
   while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
     debug_printf("Waiting for conn lock in close foggy\n");
   }
-  // if(sock->received_len == 0 && sock->connected == 4) {
-  //   sock->connected = 3;
-  //   debug_printf("Setting connected to 3\n");
-  //   debug_printf("Sock state dying, connected: %d, %d\n", sock->dying, sock->connected);
-  // }
+
   pthread_mutex_unlock(&(sock->connected_lock));
   while(sock->dying != 1){
-    //debug_printf("Waiting for FIN-ACK in close foggy\n");
     usleep(1000);
   }
 

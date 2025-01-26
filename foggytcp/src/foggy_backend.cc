@@ -117,7 +117,7 @@ void *begin_backend(void *in) {
   int death, buf_len, send_signal;
   uint8_t *data;
   while (1) {
-    debug_printf("Current states connected: %d, death: %d \n", sock->connected, sock->dying);
+    //debug_printf("Current states connected: %d, death: %d \n", sock->connected, sock->dying);
 
     while (pthread_mutex_lock(&(sock->death_lock)) != 0) {
       debug_printf("Waiting for dying lock in begin backend\n");

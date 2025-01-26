@@ -49,7 +49,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           sock->connected = 1; // inidcate first handshaking done
 
           sock->window.advertised_window = get_advertised_window(hdr); // updating advertised window
-
+          debug_printf("Setting advertised window to %d\n", sock->window.advertised_window);
           // Send SYN-ACK
           uint8_t *syn_ack_pkt = create_packet(
               sock->my_port, ntohs(sock->conn.sin_port),
@@ -72,7 +72,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           sock->window.next_seq_expected = get_seq(hdr) + 1;
           sock->window.last_ack_received = get_ack(hdr); // update ack
           sock->window.advertised_window = get_advertised_window(hdr); // updating advertised window
-
+          debug_printf("Setting advertised window to %d\n", sock->window.advertised_window);
           sock->connected = 2; // handshaking done, initiater side only need to confirm once
 
           // Adding any possible data to receive window
@@ -136,6 +136,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
 
           // if (get_payload_len(pkt) == 0) handle_congestion_window(sock, pkt);
           sock->window.advertised_window = get_advertised_window(hdr); //getting the amount of data the receiver can accept
+          debug_printf("Setting advertised window to %d\n", sock->window.advertised_window);
           while (pthread_mutex_lock(&(sock->window.ack_lock)) != 0)
           {
             debug_printf("Waiting for ack lock in on recv pkt\n");
@@ -158,7 +159,8 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               else if((sock->connected == 4 && sock->dying == 3)){
                 while(pthread_mutex_lock(&(sock->death_lock)) != 0){\
                 }
-                sock->dying = 2;
+                sock->dying = 1; // immediate close
+                sock->connected = 0;
                 pthread_mutex_unlock(&(sock->death_lock));
                 reset_time_out(sock);
                 debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
@@ -275,7 +277,12 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
     pthread_mutex_unlock(&(sock->connected_lock));
     while(pthread_mutex_lock(&(sock->death_lock)) != 0){
     }
-    sock->dying = 3;
+    if(sock->connected == 4){
+      sock->dying = 2;
+    }
+    else{
+      sock->dying = 3;
+    }
     pthread_mutex_unlock(&(sock->death_lock));
     debug_printf("Sended FIN %u\n", sock->window.last_byte_sent);
   }
@@ -400,165 +407,6 @@ void process_receive_window(foggy_socket_t *sock) {
 }
 
 
-
-
-
-
-
-
-
-
-
-
-
-// void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
-//   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)pkt;
-//   uint32_t p_seq = get_seq(hdr);
-//   uint32_t p_end = p_seq + get_payload_len(pkt);
-
-//   // Check if the packet is within the receive window
-//   if (p_seq < sock->window.next_seq_expected || p_end > sock->window.next_seq_expected + MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS)) {
-//     debug_printf("Packets not in receive window seq: %d\n", p_seq);
-//     return; // packet not in receive window
-//   }
-
-//   // if(sock->window.received_pkt.find(p_seq) != sock->window.received_pkt.end()){
-//   //   debug_printf("Receive duplicate packets timeout too fast\n");
-//   //   return;
-//   // }
-
-//   sock->window.received_pkt.insert(p_seq);
-//   // if(sock->window.received_pkt.find(get_seq((foggy_tcp_header_t*) pkt)) != sock->window.received_pkt.end()){
-//   //   return;
-//   // }
-  
-//   // sock->window.received_pkt.insert(get_seq((foggy_tcp_header_t*) pkt));
-
-//   // Handle in-order packet
-//   if (p_seq == sock->window.next_seq_expected) {
-//     receive_window_slot_t *cur_slot = &(sock->receive_window[sock->window.receive_window_end_ptr]);
-//     if (cur_slot->is_used == 0) {
-//       cur_slot->is_used = 1;
-//       cur_slot->msg = (uint8_t*) malloc(get_plen(hdr));
-//       memcpy(cur_slot->msg, pkt, get_plen(hdr));
-//       sock->window.receive_window_end_ptr = (sock->window.receive_window_end_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
-//     } 
-//     else {
-//       debug_printf("Error: Slot already used for in-order packet. Process_receive_window efficiency not enough\n");
-//       receive_window_slot_t temp;
-//       temp.msg = (uint8_t*) malloc(get_plen(hdr));
-//       temp.is_used = 1;
-//       memcpy(temp.msg, pkt, get_plen(hdr));
-//       //sock->not_sequential_receive_window.push(std::move(temp));
-//       sock->out_of_order_queue[p_seq] = temp.msg;
-//     }
-
-//     uint32_t cur_recv = sock->window.next_seq_expected + get_payload_len(pkt);
-//     uint8_t* non_seq_slot = nullptr;
-//     while (!sock->out_of_order_queue.empty()) {
-//       cur_slot = &(sock->receive_window[sock->window.receive_window_end_ptr]);
-//       non_seq_slot = sock->out_of_order_queue.begin()->second;
-//       uint32_t seq = sock->out_of_order_queue.begin()->first;
-//       uint16_t payload_len = get_payload_len(non_seq_slot);
-//       if (cur_slot->is_used == 0) {
-//         if(seq == cur_recv){
-//           cur_slot->is_used = 1;
-//           cur_slot->msg = non_seq_slot;
-//           cur_recv += payload_len;
-//           sock->window.receive_window_end_ptr = (sock->window.receive_window_end_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
-//         }
-//         else{
-//           debug_printf("Duplicate packet received\n");
-//         }
-//       } 
-//       else {
-//         debug_printf("Error: Slot already used for in-order packet. Process_receive_window efficiency not enough\n");
-//         break;
-//       }
-//       sock->out_of_order_queue.erase(seq);
-//     }
-//   } 
-//   else { // Handle out-of-order packet
-//     debug_printf("Non-sequential packet seq: %d\n", p_seq);
-//     receive_window_slot_t temp;
-//     temp.msg = (uint8_t*) malloc(get_plen(hdr));
-//     temp.is_used = 1;
-//     memcpy(temp.msg, pkt, get_plen(hdr));
-//     sock->not_sequential_receive_window.push(std::move(temp));
-//   }
-
-//   debug_printf("Number of packets in seq receive window and in non seq window : %d, %d\n", (sock->window.receive_window_end_ptr - sock->window.receive_window_start_ptr + RECEIVE_WINDOW_SLOT_SIZE) % RECEIVE_WINDOW_SLOT_SIZE, sock->not_sequential_receive_window.size());
-// }
-
-// void process_receive_window(foggy_socket_t *sock) {
-//   // Stop-and-wait implementation.
-//   // Only process the first packet in the window.
-
-//   receive_window_slot_t* cur_slot = nullptr;
-
-//   //*work*
-//   while(true){
-//     cur_slot = &(sock->receive_window[sock->window.receive_window_start_ptr]);
-
-//     if(cur_slot->is_used == 0) return;
-    
-//     foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
-//     // Discard unexpected packet
-//     if (get_seq(hdr) != sock->window.next_seq_expected) {
-//           // Process any buffered out-of-order packets that can now be processed
-//       return;
-//     }
-//     // Update next seq number expected
-//     uint16_t payload_len = get_payload_len(cur_slot->msg);
-//     sock->window.next_seq_expected += payload_len;
-
-//     debug_printf("Setting next_seq_expected to: %ld\n", sock->window.next_seq_expected);
-
-//     // Copy to received_buf
-//     sock->received_buf = (uint8_t*)
-//         realloc(sock->received_buf, sock->received_len + payload_len);
-
-//     memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
-//             payload_len);
-            
-//     sock->received_len += payload_len;
-
-//     // sock->window.received_pkt.erase(get_seq(hdr));
-//     // Free the slot
-//     sock->window.received_pkt.erase(get_seq(hdr));
-//     free(cur_slot->msg); 
-//     cur_slot->msg = nullptr;
-//     cur_slot->is_used = 0;
-     
-//     sock->window.receive_window_start_ptr = (sock->window.receive_window_start_ptr + 1) % RECEIVE_WINDOW_SLOT_SIZE;
-   
-//     // WORK
-//     if(sock->window.receive_window_start_ptr == sock->window.receive_window_end_ptr){
-//       break;
-//     }
-//   }
-//   //*work*
-
-//   // if (cur_slot->is_used != 0) {
-//   //   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)cur_slot->msg;
-//   //   // Discard unexpected packet
-//   //   if (get_seq(hdr) != sock->window.next_seq_expected) return;
-//   //   // Update next seq number expected
-//   //   uint16_t payload_len = get_payload_len(cur_slot->msg);
-//   //   sock->window.next_seq_expected += payload_len;
-//   //   // Copy to received_buf
-//   //   sock->received_buf = (uint8_t*)
-//   //       realloc(sock->received_buf, sock->received_len + payload_len);
-//   //   memcpy(sock->received_buf + sock->received_len, get_payload(cur_slot->msg),
-//   //          payload_len);
-//   //   sock->received_len += payload_len;
-//   //   // Free the slot
-//   //   cur_slot->is_used = 0;
-//   //   free(cur_slot->msg);
-//   //   cur_slot->msg = NULL;
-//   // }
-// }
-
 //TODO: implement sliding window
 
 void transmit_send_window(foggy_socket_t *sock) {
@@ -572,9 +420,12 @@ void transmit_send_window(foggy_socket_t *sock) {
     send_window_slot_t &next_slot = sock->send_window[sock->window.last_sent_pos + 1];
     uint16_t payload_len = get_payload_len(next_slot.msg);
 
-    if (sock->window.window_used + payload_len > sock->window.congestion_window ||  //TODO  congestion control, need to be changed
-        sock->window.advertised_window < payload_len) {
-          //debug_printf("either reach congestion window limit or advertised window limit, values: %u,  %u\n", sock->window.window_used,   sock->window.advertised_window);
+    if (sock->window.window_used + payload_len > sock->window.congestion_window){
+      debug_printf("Reach congestion window limit\n");
+      break;
+    }
+    if(sock->window.advertised_window < payload_len) {
+      debug_printf("Reach advertised window limit\n");
       break;
     }
 
@@ -676,6 +527,5 @@ bool check_time_out(foggy_socket_t *sock){
   else{
     return false;
   }
-  //return false;
 }
 

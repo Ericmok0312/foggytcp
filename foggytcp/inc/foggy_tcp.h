@@ -116,8 +116,23 @@ struct foggy_socket_t {
   pthread_mutex_t death_lock;
   window_t window;
   pthread_mutex_t connected_lock;
-  int connected;  // indicates if the socket is in valid connection state
-  // 0: not  connected 1: requesting/waiting 2: double link 3: requesting close connection 4: accepting close connection
+  int connected;
+
+
+  /*
+  Desciption of state control of socket
+                Listener                           Initiator
+  Initial      con = 0, dying = 0              con = 0, dying = 0
+  Connecting   con = 0, dying = 0              con = 1, dying = 0
+  Connected    con = 2, dying = 0              con = 2, dying = 0
+
+  Send/Recv FIN1   con = 4, dying = 0          con = 3, dying = 3  (waiting for FIN of Server)
+  Send/Recv FIN2   con = 4, dying = 2          con = 0, dying = 2
+
+  Close sock(FIN-ACK2 recv) con = 0, dying =1   con = 0, dying = 1
+  Close sock(FIN-ACK2 Not recv) con = 4, dying = 1  con = 0, dying = 1
+  
+  */
   
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;
