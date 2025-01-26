@@ -283,14 +283,6 @@ int foggy_read(void* in_sock, void *buf, int length) {
 
   while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
   }
-  //debug_printf("Reading bytes\n");
-
-  // if(sock->received_len == 0 && sock->connected == 3) {
-  //   while(pthread_mutex_lock(&(sock->death_lock)) != 0){
-  //   }
-  //   sock->dying = 1;
-  //   pthread_mutex_unlock(&(sock->death_lock));
-  // }
 
   while (sock->received_len == 0 && sock->connected != 4) {
     pthread_cond_wait(&(sock->wait_cond), &(sock->recv_lock));

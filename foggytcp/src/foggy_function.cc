@@ -262,10 +262,10 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
         MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
         NULL, 0);
 
-    //sock->send_window.push_back(slot);
-    sendto(sock->socket, slot.msg, get_plen((foggy_tcp_header_t*)slot.msg), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+    sock->send_window.push_back(slot);
+    //sendto(sock->socket, slot.msg, get_plen((foggy_tcp_header_t*)slot.msg), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
     sock->window.last_byte_sent += 1;
-    free(slot.msg);
+    // free(slot.msg);
     while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
       debug_printf("waiting connected_lock in send pkts\n");
     }
@@ -609,7 +609,7 @@ void transmit_send_window(foggy_socket_t *sock) {
 
 
 void receive_send_window(foggy_socket_t *sock) {
-  debug_printf("Called here\n");
+  //debug_printf("Called here\n");
 
   // Timeout resend
   if (check_time_out(sock) && !sock->send_window.empty()) {

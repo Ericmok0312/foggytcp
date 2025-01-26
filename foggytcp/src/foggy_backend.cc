@@ -126,10 +126,10 @@ void *begin_backend(void *in) {
 
     pthread_mutex_unlock(&(sock->death_lock));
     
-    while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
-      debug_printf("waiting for conn lock\n");
-    }
-
+    // while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
+    //   debug_printf("waiting for conn lock\n");
+    // }
+    // pthread_mutex_unlock(&(sock->connected_lock));
 
     // if(sock->connected == 3 && death == 3){ // in the stage of waiting for FIN
     //   debug_printf("WAITING FOR FIN of other side\n");
@@ -145,7 +145,7 @@ void *begin_backend(void *in) {
     //   continue;
     // }
 
-    pthread_mutex_unlock(&(sock->connected_lock));
+
 
 
     // debug_printf("Backend running, dying %d\n", death);
@@ -168,7 +168,7 @@ void *begin_backend(void *in) {
     }
 
     if(death == 3){
-      debug_printf("Waiting for FIN of otherside\n");
+      //debug_printf("Waiting for FIN of otherside\n");
       pthread_mutex_unlock(&(sock->send_lock));
       send_pkts(sock, NULL, 0);
       check_for_pkt(sock, NO_WAIT);
@@ -230,7 +230,7 @@ void *begin_backend(void *in) {
       // debug_printf("signaling\n");
       pthread_cond_signal(&(sock->wait_cond));
     }
-    debug_printf("Next loop\n");
+    //debug_printf("Next loop\n");
   }
   debug_printf("Thread terminated\n");
   pthread_exit(NULL);
@@ -280,8 +280,8 @@ void foggy_connect(foggy_socket_t *sock) {
 
   debug_printf("Connecting to port %d\n", ntohs(sock->conn.sin_port));
 
-  // while(pthread_mutex_lock(&(sock->send_lock)) != 0) {  
-  // }
+  while(pthread_mutex_lock(&(sock->death_lock)) != 0) {  
+  }
 
   debug_printf("Sending SYN packet %d\n", sock->window.last_byte_sent);
   
@@ -298,7 +298,6 @@ void foggy_connect(foggy_socket_t *sock) {
   
 
   reset_time_out(sock);
-  // pthread_mutex_unlock(&(sock->send_lock)); // release the lock
 
   while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
     debug_printf("Waiting for conn lock in foggy connect\n");
@@ -317,8 +316,11 @@ void foggy_connect(foggy_socket_t *sock) {
   free(syn_pkt); // prevent leakage
 
   sock->window.last_byte_sent++; // update the last byte sent
+  
 
   pthread_mutex_unlock(&(sock->connected_lock));
+  pthread_mutex_unlock(&(sock->death_lock)); // release the lock
+
   
   debug_printf("Connection established\n");
 }
