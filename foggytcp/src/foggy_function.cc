@@ -105,16 +105,21 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
 
           debug_printf("Sending FIN-ACK %u\n", get_seq(hdr) + 1);
 
-
           // Update the state to indicate that the connection is closing
           while (pthread_mutex_lock(&(sock->connected_lock)) != 0) {
-          }
+            debug_printf("Waiting for conn lock in on recv pkt\n");
+          } 
+          if(sock->connected == 2){
             sock->connected = 4;
             debug_printf("Setting connected to 4\n");
-          
-
+          }
+          else if(sock->connected == 3){
+            sock->connected = 0;
+            debug_printf("Setting connected to 0\n");
+          }
+          pthread_mutex_unlock(&(sock->connected_lock));
           while (pthread_mutex_lock(&(sock->death_lock)) != 0){
-            debug_printf("Waiting for death lock\n");
+            debug_printf("Waiting for death lock in on recv pkt\n");
           }
           if(sock->dying == 3){ // client receiving FIN-ACK from server
             sock->dying = 2;  // entering the stage for counting down
@@ -123,8 +128,6 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
             debug_printf("Setting terminate socket timer to %ld \n", sock->window.timeout_timer);
           }
           pthread_mutex_unlock(&(sock->death_lock));
-          pthread_mutex_unlock(&(sock->connected_lock));
-
           break;
       }
       case ACK_FLAG_MASK: {  // NEED TO CHANGE THIS
@@ -135,17 +138,30 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           sock->window.advertised_window = get_advertised_window(hdr); //getting the amount of data the receiver can accept
           while (pthread_mutex_lock(&(sock->window.ack_lock)) != 0)
           {
+            debug_printf("Waiting for ack lock in on recv pkt\n");
           }
           if (after(ack, sock->window.last_ack_received)) { 
               sock->window.last_ack_received = ack;                           
               if(sock->connected == 3) {
                   while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+                    debug_printf("Waiting for death lock in on recv pkt, ack\n");
                   } 
-                  sock->dying = 3; // dying 3, indicating the state for only receiving packets
+
+                  if(sock->dying != 3){
+                    sock->dying = 2; // dying 3, indicating the state for only receiving packets
+                  }
                   pthread_mutex_unlock(&(sock->death_lock));
                   debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
                   sock->window.timeout_timer = time(nullptr);
                   sock->window.dup_ack_count = 0;
+              }
+              else if((sock->connected == 4 && sock->dying == 3)){
+                while(pthread_mutex_lock(&(sock->death_lock)) != 0){\
+                }
+                sock->dying = 2;
+                pthread_mutex_unlock(&(sock->death_lock));
+                reset_time_out(sock);
+                debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
               }
               else{
                   debug_printf("Receive ACK %u\n", get_ack(hdr));
@@ -164,7 +180,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           }
           else{
             pthread_mutex_unlock(&(sock->window.ack_lock));
-            //return;
+            return;
           }
           pthread_mutex_unlock(&(sock->window.ack_lock));
           if(sock->connected == 1) {
@@ -215,7 +231,6 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
 void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
   uint8_t *data_offset = data;
   transmit_send_window(sock);
-
   if (buf_len > 0) {
     while (buf_len != 0) {
       uint16_t payload_len = MIN(buf_len, (int)MSS);
@@ -236,7 +251,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
       sock->window.last_byte_sent += payload_len;
     }
   } else if (flags == FIN_FLAG_MASK) {
-
+    debug_printf("Start Send FIN %u\n", sock->window.last_byte_sent);
     send_window_slot_t slot;
     slot.is_sent = 0;
     slot.msg = create_packet(
@@ -247,20 +262,22 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
         MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
         NULL, 0);
 
-    sock->send_window.push_back(slot);
-    //sendto(sock->socket, slot.msg, get_plen((foggy_tcp_header_t*)slot.msg), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+    //sock->send_window.push_back(slot);
+    sendto(sock->socket, slot.msg, get_plen((foggy_tcp_header_t*)slot.msg), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
     sock->window.last_byte_sent += 1;
+    free(slot.msg);
     while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
-      debug_printf("waiting connected_lock\n");
+      debug_printf("waiting connected_lock in send pkts\n");
     }
     if(sock->connected != 4){
       sock->connected = 3;
     }
-    // else{
-    //   sock->dying = 1;
-    // }
     pthread_mutex_unlock(&(sock->connected_lock));
-    debug_printf("Sending FIN %u\n", sock->window.last_byte_sent);
+    while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+    }
+    sock->dying = 3;
+    pthread_mutex_unlock(&(sock->death_lock));
+    debug_printf("Sended FIN %u\n", sock->window.last_byte_sent);
   }
   receive_send_window(sock);
 }
@@ -592,9 +609,10 @@ void transmit_send_window(foggy_socket_t *sock) {
 
 
 void receive_send_window(foggy_socket_t *sock) {
+  debug_printf("Called here\n");
 
   // Timeout resend
-  if (check_time_out(sock)) {
+  if (check_time_out(sock) && !sock->send_window.empty()) {
     debug_printf("Timeout reached, resending packet %u\n", get_seq((foggy_tcp_header_t*)sock->send_window.front().msg));
     resend(sock);
     return;
@@ -609,7 +627,7 @@ void receive_send_window(foggy_socket_t *sock) {
     send_window_slot_t slot = sock->send_window.front();
     foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)slot.msg;
 
-    if (slot.is_sent == 0) {
+    if (slot.is_sent == 0 || slot.msg == nullptr) {
       break;
     }
     if (has_been_acked(sock, get_seq(hdr)) == 0) {
@@ -621,6 +639,7 @@ void receive_send_window(foggy_socket_t *sock) {
     sock->window.last_sent_pos--;
     sock->window.window_used -= get_payload_len(slot.msg);
     free(slot.msg);
+    slot.msg = nullptr;
     checked = true;
   }
 
@@ -650,7 +669,7 @@ void reset_time_out(foggy_socket_t *sock){
 bool check_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
   time_t current_time = std::chrono::system_clock::to_time_t(now);
-  if(sock->window.timeout_timer <= current_time && sock->window.timeout_timer != time(nullptr)){
+  if(sock->window.timeout_timer != time(nullptr) && sock->window.timeout_timer <= current_time ){
     debug_printf("Time out \n");
     return true;
   }

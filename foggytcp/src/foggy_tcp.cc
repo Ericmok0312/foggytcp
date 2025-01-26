@@ -197,10 +197,13 @@ int foggy_close(void *in_sock) {
   // Send FIN packet to the other side
   
   while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
+    debug_printf("Waiting for send lock in foggy close\n");
   }
+  debug_printf("sending fin in close foggy\n");
   
   send_pkts(sock, NULL, 0, FIN_FLAG_MASK); // which will set connected to 3
 
+  debug_printf("sended fin in close foggy\n");
   pthread_mutex_unlock(&(sock->send_lock));
 
   // Wait for the FIN-ACK from the other side or timeout
@@ -223,15 +226,17 @@ int foggy_close(void *in_sock) {
   //     // pthread_mutex_unlock(&(sock->death_lock));
   //   }
   // }
-
-  if(sock->received_len == 0 && sock->connected == 4) {
-    while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
-    }
-    sock->connected = 3;
-    pthread_mutex_unlock(&(sock->connected_lock));
+  while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
+    debug_printf("Waiting for conn lock in close foggy\n");
   }
-
+  // if(sock->received_len == 0 && sock->connected == 4) {
+  //   sock->connected = 3;
+  //   debug_printf("Setting connected to 3\n");
+  //   debug_printf("Sock state dying, connected: %d, %d\n", sock->dying, sock->connected);
+  // }
+  pthread_mutex_unlock(&(sock->connected_lock));
   while(sock->dying != 1){
+    //debug_printf("Waiting for FIN-ACK in close foggy\n");
     usleep(1000);
   }
 
@@ -248,13 +253,17 @@ int foggy_close(void *in_sock) {
     if (sock->sending_buf != NULL) {
       free(sock->sending_buf);
     }
-
+    while (!sock->send_window.empty()) {
+      transmit_send_window(sock);
+      receive_send_window(sock);
+    }
   } else {
     perror("ERROR null socket\n");
     return EXIT_ERROR;
   }
-
-  return close(sock->socket);
+  int ret = close(sock->socket);
+  delete sock;
+  return ret;
 }
 
 
@@ -272,8 +281,8 @@ int foggy_read(void* in_sock, void *buf, int length) {
     return EXIT_ERROR;
   }
 
-  // while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
-  // }
+  while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
+  }
   //debug_printf("Reading bytes\n");
 
   // if(sock->received_len == 0 && sock->connected == 3) {
@@ -306,13 +315,14 @@ int foggy_read(void* in_sock, void *buf, int length) {
       sock->received_len = 0;
     }
   }
-  //pthread_mutex_unlock(&(sock->recv_lock));
+  pthread_mutex_unlock(&(sock->recv_lock));
   return read_len;
 }
 
 int foggy_write(void *in_sock, const void *buf, int length) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
   while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
+    debug_printf("Waiting for send lock in foggy write\n");
   }
   if (sock->sending_buf == NULL)
     sock->sending_buf = (uint8_t*) malloc(length);
