@@ -169,7 +169,6 @@ int foggy_close(void *in_sock) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
   usleep(1000); // TODO should have better way to prevent entering this fucntion too early
 
-
   //debug_printf("foggy_close \n");
   
   // Ensure all data is sent before closing
@@ -182,28 +181,26 @@ int foggy_close(void *in_sock) {
 
 
   while(!after(sock->window.last_ack_received, sock->window.last_byte_sent-1)){ // checking for all byte acked, prevent overflow
-    usleep(5000);
+    usleep(1000);
   }
- 
-  
   // Send FIN packet to the other side
-  
-  while(pthread_mutex_lock(&(sock->send_lock)) != 0) {
-    debug_printf("Waiting for send lock in foggy close\n");
+  // while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+  // }
+  while(pthread_mutex_lock(&(sock->send_lock)) != 0){
   }
-  debug_printf("sending fin in close foggy\n");
-  
-  send_pkts(sock, NULL, 0, FIN_FLAG_MASK); // which will set connected to 3
+  if(sock->dying != 1){
+    debug_printf("sending fin in close foggy\n");
+    
+    send_pkts(sock, NULL, 0, FIN_FLAG_MASK); // which will set connected to 3
 
-  debug_printf("sended fin in close foggy\n");
+    debug_printf("sended fin in close foggy\n");
+
+  }
+  // pthread_mutex_unlock(&(sock->death_lock));
   pthread_mutex_unlock(&(sock->send_lock));
 
-  
-  while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
-    debug_printf("Waiting for conn lock in close foggy\n");
-  }
 
-  pthread_mutex_unlock(&(sock->connected_lock));
+  
   while(sock->dying != 1){
     usleep(1000);
   }
@@ -225,7 +222,8 @@ int foggy_close(void *in_sock) {
       transmit_send_window(sock);
       receive_send_window(sock);
     }
-  } else {
+  } 
+  else {
     perror("ERROR null socket\n");
     return EXIT_ERROR;
   }

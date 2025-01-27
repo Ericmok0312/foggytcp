@@ -31,7 +31,11 @@ from releasing their forks in any public places. */
  *
  * In the current stop-and-wait implementation, this function also sends an
  * acknowledgement for the packet.
+ * 
+ * recv_lock locked in check_for_pkt
  *
+ * locking connected lock and death lock and connected lock
+ * 
  * @param sock The socket used for handling packets received.
  * @param pkt The packet data received by the socket.
  */
@@ -92,6 +96,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           break;
       }
       case FIN_FLAG_MASK: {
+
           debug_printf("Receive FIN %u \n", get_seq(hdr));
           uint8_t *fin_ack_pkt = create_packet(
               sock->my_port, ntohs(sock->conn.sin_port),
@@ -133,14 +138,13 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
       case ACK_FLAG_MASK: {  // NEED TO CHANGE THIS
           uint32_t ack = get_ack(hdr);
           // TODO: change here to implement sliding window
-
           // if (get_payload_len(pkt) == 0) handle_congestion_window(sock, pkt);
           sock->window.advertised_window = get_advertised_window(hdr); //getting the amount of data the receiver can accept
           debug_printf("Setting advertised window to %d\n", sock->window.advertised_window);
-          while (pthread_mutex_lock(&(sock->window.ack_lock)) != 0)
-          {
-            debug_printf("Waiting for ack lock in on recv pkt\n");
-          }
+          // while (pthread_mutex_lock(&(sock->window.ack_lock)) != 0)
+          // {
+          //   debug_printf("Waiting for ack lock in on recv pkt\n");
+          // }
           if (after(ack, sock->window.last_ack_received)) { 
               sock->window.last_ack_received = ack;                           
               if(sock->connected == 3) {
@@ -151,13 +155,16 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
                   if(sock->dying != 3){
                     sock->dying = 2; // dying 3, indicating the state for only receiving packets
                   }
+                  else{
+                    sock->dying = 1;  // new
+                  }
                   pthread_mutex_unlock(&(sock->death_lock));
                   debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
                   sock->window.timeout_timer = time(nullptr);
                   sock->window.dup_ack_count = 0;
               }
               else if((sock->connected == 4 && sock->dying == 3)){
-                while(pthread_mutex_lock(&(sock->death_lock)) != 0){\
+                while(pthread_mutex_lock(&(sock->death_lock)) != 0){
                 }
                 sock->dying = 1; // immediate close
                 sock->connected = 0;
@@ -181,10 +188,10 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
             }
           }
           else{
-            pthread_mutex_unlock(&(sock->window.ack_lock));
-            return;
+            // pthread_mutex_unlock(&(sock->window.ack_lock));
+            break;
           }
-          pthread_mutex_unlock(&(sock->window.ack_lock));
+          // pthread_mutex_unlock(&(sock->window.ack_lock));
           if(sock->connected == 1) {
               sock->connected = 2; // connection established
           }
@@ -264,25 +271,23 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
         MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
         NULL, 0);
 
-    sock->send_window.push_back(slot);
+    sock->send_window.emplace_back(move(slot));
     //sendto(sock->socket, slot.msg, get_plen((foggy_tcp_header_t*)slot.msg), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
     sock->window.last_byte_sent += 1;
     // free(slot.msg);
     while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
       debug_printf("waiting connected_lock in send pkts\n");
     }
-    if(sock->connected != 4){
-      sock->connected = 3;
-    }
-    pthread_mutex_unlock(&(sock->connected_lock));
     while(pthread_mutex_lock(&(sock->death_lock)) != 0){
     }
-    if(sock->connected == 4){
-      sock->dying = 2;
-    }
-    else{
+    if(sock->connected != 4){
+      sock->connected = 3;
       sock->dying = 3;
     }
+    else{
+      sock->dying = 2;
+    }
+    pthread_mutex_unlock(&(sock->connected_lock));
     pthread_mutex_unlock(&(sock->death_lock));
     debug_printf("Sended FIN %u\n", sock->window.last_byte_sent);
   }
@@ -295,7 +300,9 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)pkt;
   uint32_t p_seq = get_seq(hdr);
   uint32_t p_end = p_seq + get_payload_len(pkt);
-
+  if(get_payload_len(pkt) == 0){
+    return;
+  }
   // Check if the packet is within the receive window
   if (p_seq < sock->window.next_seq_expected || p_end > sock->window.next_seq_expected + MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS)) {
     debug_printf("Packets not in receive window seq: %d\n", p_seq);
@@ -501,7 +508,7 @@ void receive_send_window(foggy_socket_t *sock) {
   //debug_printf("packets waiting for ACK %d \n", sock->window.last_sent_pos+1);
 }
 
-void resend(foggy_socket_t *sock){
+inline void resend(foggy_socket_t *sock){
   send_window_slot_t &packet = sock->send_window.front();
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)packet.msg;
   debug_printf("Trigger resend, sending seq %d\n", get_seq(hdr));
@@ -510,14 +517,14 @@ void resend(foggy_socket_t *sock){
   reset_time_out(sock);
 }
 
-void reset_time_out(foggy_socket_t *sock){
+inline void reset_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
-  auto new_time = now + std::chrono::seconds(TIMEOUT_SECONDS);
+  auto new_time = now + std::chrono::microseconds(5);
   sock->window.timeout_timer = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
   debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
 }
 
-bool check_time_out(foggy_socket_t *sock){
+inline bool check_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
   time_t current_time = std::chrono::system_clock::to_time_t(now);
   if(sock->window.timeout_timer != time(nullptr) && sock->window.timeout_timer <= current_time ){

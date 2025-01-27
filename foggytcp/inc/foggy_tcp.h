@@ -39,7 +39,7 @@ using namespace std;
 #define RECEIVE_WINDOW_SLOT_SIZE 64
 
 
-#define TIMEOUT_SECONDS 5
+#define TIMEOUT_SECONDS 
 
 typedef enum {
   RENO_SLOW_START = 0,
@@ -132,7 +132,9 @@ struct foggy_socket_t {
   Close sock(FIN-ACK2 recv) con = 0, dying =1   con = 0, dying = 1
   Close sock(FIN-ACK2 Not recv) con = 4, dying = 1  con = 0, dying = 1
   
-  */
+
+
+ */
   
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;

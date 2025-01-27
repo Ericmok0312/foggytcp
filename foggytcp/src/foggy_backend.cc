@@ -112,6 +112,7 @@ void check_for_pkt(foggy_socket_t *sock, foggy_read_mode_t flags) {
 }
 
 
+
 void *begin_backend(void *in) {
   foggy_socket_t *sock = (foggy_socket_t *)in;
   int death, buf_len, send_signal;
@@ -126,33 +127,6 @@ void *begin_backend(void *in) {
 
     pthread_mutex_unlock(&(sock->death_lock));
     
-    // while(pthread_mutex_lock(&(sock->connected_lock)) != 0){
-    //   debug_printf("waiting for conn lock\n");
-    // }
-    // pthread_mutex_unlock(&(sock->connected_lock));
-
-    // if(sock->connected == 3 && death == 3){ // in the stage of waiting for FIN
-    //   debug_printf("WAITING FOR FIN of other side\n");
-    //   pthread_mutex_unlock(&(sock->connected_lock));
-    //   check_for_pkt(sock, NO_WAIT);
-    //   continue;
-    // }
-
-    // if(sock->connected == 4 && death == 0){
-    //   pthread_mutex_unlock(&(sock->send_lock));
-    //   send_pkts(sock, NULL, 0);
-    //   check_for_pkt(sock, NO_WAIT);
-    //   continue;
-    // }
-
-
-
-
-    // debug_printf("Backend running, dying %d\n", death);
-    while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
-      debug_printf("Waiting for send lock in begin backend\n");
-    }
-
     if(death == 2){  // counting down for dying
       //debug_printf("Waiting for countdown timer\n");
       if (check_time_out(sock)){
@@ -169,12 +143,15 @@ void *begin_backend(void *in) {
 
     if(death == 3){
       //debug_printf("Waiting for FIN of otherside\n");
-      pthread_mutex_unlock(&(sock->send_lock));
       send_pkts(sock, NULL, 0);
       check_for_pkt(sock, NO_WAIT);
       continue;
     }
 
+    // debug_printf("Backend running, dying %d\n", death);
+    while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
+      debug_printf("Waiting for send lock in begin backend\n");
+    }
 
     buf_len = sock->sending_len;
 
@@ -189,7 +166,6 @@ void *begin_backend(void *in) {
       pthread_mutex_unlock(&(sock->send_lock));
       break;   
     }
-
 
 
     // Normal Work Flows
@@ -219,13 +195,20 @@ void *begin_backend(void *in) {
       debug_printf("Waiting for connected lock in begin backend\n");
     }
 
-    send_signal = sock->received_len > 0  || sock->connected == 4;
 
+    send_signal = sock->received_len > 0 || sock->connected == 4;
+
+    if(sock->received_len == 0 && sock->connected == 4){
+      while (pthread_mutex_lock(&(sock->death_lock)) != 0)
+      {
+      }
+      sock->dying = 1;
+      pthread_mutex_unlock(&(sock->death_lock));
+    }
     pthread_mutex_unlock(&(sock->recv_lock));
 
     pthread_mutex_unlock(&(sock->connected_lock));
     
-
     if (send_signal) {
       // debug_printf("signaling\n");
       pthread_cond_signal(&(sock->wait_cond));
@@ -246,9 +229,9 @@ void foggy_listen(foggy_socket_t *sock) {
   
   debug_printf("Listening on port %d\n", ntohs(sock->conn.sin_port));
 
-  while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
-    debug_printf("Waiting for conn lock in foggy listen\n");
-  }
+  // while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
+  //   debug_printf("Waiting for conn lock in foggy listen\n");
+  // }
 
   while (sock->connected != 2) {
     check_for_pkt(sock, NO_FLAG);
@@ -265,7 +248,7 @@ void foggy_listen(foggy_socket_t *sock) {
     }
   }
 
-  pthread_mutex_unlock(&(sock->connected_lock)); // release the lock
+  // pthread_mutex_unlock(&(sock->connected_lock)); // release the lock
 
   debug_printf("Connection established\n");
 }
@@ -280,8 +263,8 @@ void foggy_connect(foggy_socket_t *sock) {
 
   debug_printf("Connecting to port %d\n", ntohs(sock->conn.sin_port));
 
-  while(pthread_mutex_lock(&(sock->death_lock)) != 0) {  
-  }
+  // while(pthread_mutex_lock(&(sock->death_lock)) != 0) {  
+  // }
 
   debug_printf("Sending SYN packet %d\n", sock->window.last_byte_sent);
   
@@ -299,14 +282,14 @@ void foggy_connect(foggy_socket_t *sock) {
 
   reset_time_out(sock);
 
-  while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
-    debug_printf("Waiting for conn lock in foggy connect\n");
-  }
+  // while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {  
+  //   debug_printf("Waiting for conn lock in foggy connect\n");
+  // }
 
 
   while (sock->connected != 2) {
     check_for_pkt(sock, NO_FLAG);
-    if(check_time_out(sock)){
+    if(check_time_out(sock) && sock->connected != 2){
       sendto(sock->socket, syn_pkt, sizeof(foggy_tcp_header_t), 0,
                     (struct sockaddr *)&(sock->conn), sizeof(sock->conn)); // sending syn packet, currently no timeout
       reset_time_out(sock);
@@ -318,8 +301,8 @@ void foggy_connect(foggy_socket_t *sock) {
   sock->window.last_byte_sent++; // update the last byte sent
   
 
-  pthread_mutex_unlock(&(sock->connected_lock));
-  pthread_mutex_unlock(&(sock->death_lock)); // release the lock
+  // pthread_mutex_unlock(&(sock->connected_lock));
+  // pthread_mutex_unlock(&(sock->death_lock)); // release the lock
 
   
   debug_printf("Connection established\n");
