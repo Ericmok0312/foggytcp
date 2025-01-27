@@ -36,7 +36,7 @@ using namespace std;
 #define EXIT_FAILURE 1
 
 /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
-#define RECEIVE_WINDOW_SLOT_SIZE 64
+#define RECEIVE_WINDOW_SLOT_SIZE 256
 
 
 #define TIMEOUT_SECONDS 
