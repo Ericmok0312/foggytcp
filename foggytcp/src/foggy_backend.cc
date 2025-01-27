@@ -32,6 +32,7 @@ from releasing their forks in any public places. */
 #include "foggy_packet.h"
 #include "foggy_tcp.h"
 #include "grading.h"
+#include <chrono>
 
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) > (Y)) ? (X) : (Y))
@@ -195,6 +196,24 @@ void *begin_backend(void *in) {
       debug_printf("Waiting for connected lock in begin backend\n");
     }
 
+    
+    auto now = std::chrono::system_clock::now();
+    time_t current_time = std::chrono::system_clock::to_time_t(now);
+
+    if(sock->window.send_ack_state == SEQ_PREV_PKT_NOT_ACK && sock->window.ack_timeout != time(nullptr) && sock->window.ack_timeout <= current_time){
+      debug_printf("Sending ACK packet due to timeout %u\n", sock->window.next_seq_expected);
+                uint8_t *ack_pkt = create_packet(
+                    sock->my_port, ntohs(sock->conn.sin_port),
+                    sock->window.last_byte_sent, sock->window.next_seq_expected,
+                    sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
+                    MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+                    NULL, NULL, 0);
+                sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
+                      (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+                free(ack_pkt);
+      sock->window.ack_timeout = time(nullptr);
+      sock->window.send_ack_state = NO_PREV_ACK_WAIT;
+    }
 
     send_signal = sock->received_len > 0 || sock->connected == 4;
 

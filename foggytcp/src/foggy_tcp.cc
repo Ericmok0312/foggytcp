@@ -86,6 +86,9 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
   sock->window.last_sent_pos = -1;
 
   sock->window.timeout_timer = time(nullptr); // invalid timer initially
+  sock->window.ack_timeout = time(nullptr);
+
+  sock->window.send_ack_state = NO_PREV_ACK_WAIT;
 
   // sock->window.receive_window_start_ptr = 0;
   // sock->window.receive_window_end_ptr = 0 // end_ptr pointing to first available slot

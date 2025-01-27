@@ -96,7 +96,6 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           break;
       }
       case FIN_FLAG_MASK: {
-
           debug_printf("Receive FIN %u \n", get_seq(hdr));
           uint8_t *fin_ack_pkt = create_packet(
               sock->my_port, ntohs(sock->conn.sin_port),
@@ -187,10 +186,6 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               resend(sock);
             }
           }
-          else{
-            // pthread_mutex_unlock(&(sock->window.ack_lock));
-            break;
-          }
           // pthread_mutex_unlock(&(sock->window.ack_lock));
           if(sock->connected == 1) {
               sock->connected = 2; // connection established
@@ -203,22 +198,25 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
                           get_seq(hdr) + get_payload_len(pkt));
 
               sock->window.advertised_window = get_advertised_window(hdr);
-              debug_printf("Setting advertised_window to %ld\n", sock->window.advertised_window);
+              debug_printf("Setting advertised_window to %ds\n", sock->window.advertised_window);
               // Add the packet to receive window and process receive window
+              bool send_ack = check_send_ack(sock, pkt);
+
               add_receive_window(sock, pkt); 
               process_receive_window(sock);
               // Send ACK
-              debug_printf("Sending ACK packet %u\n", sock->window.next_seq_expected);
-
-              uint8_t *ack_pkt = create_packet(
-                  sock->my_port, ntohs(sock->conn.sin_port),
-                  sock->window.last_byte_sent, sock->window.next_seq_expected,
-                  sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-                  MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
-                  NULL, NULL, 0);
-              sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
-                    (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-              free(ack_pkt);
+              if(send_ack){
+                debug_printf("Sending ACK packet %u\n", sock->window.next_seq_expected);
+                uint8_t *ack_pkt = create_packet(
+                    sock->my_port, ntohs(sock->conn.sin_port),
+                    sock->window.last_byte_sent, sock->window.next_seq_expected,
+                    sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
+                    MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+                    NULL, NULL, 0);
+                sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
+                      (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+                free(ack_pkt);
+              }
           }
           break;
       }
@@ -519,7 +517,7 @@ inline void resend(foggy_socket_t *sock){
 
 inline void reset_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
-  auto new_time = now + std::chrono::microseconds(5);
+  auto new_time = now + std::chrono::seconds(1);
   sock->window.timeout_timer = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
   debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
 }
@@ -534,5 +532,64 @@ inline bool check_time_out(foggy_socket_t *sock){
   else{
     return false;
   }
+}
+
+inline void reset_ack_time_out(foggy_socket_t *sock){
+  auto now = std::chrono::system_clock::now();
+  auto new_time = now + std::chrono::seconds(1);
+  sock->window.ack_timeout = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
+  debug_printf("Setting ack timeout to %ld \n", sock->window.ack_timeout);
+}
+
+inline bool check_ack_time_out(foggy_socket_t *sock){
+  auto now = std::chrono::system_clock::now();
+  time_t current_time = std::chrono::system_clock::to_time_t(now);
+  if(sock->window.ack_timeout != time(nullptr) && sock->window.ack_timeout <= current_time ){
+    debug_printf("Time out \n");
+    return true;
+  }
+  else{
+    return false;
+  }
+}
+
+
+inline bool check_send_ack(foggy_socket_t* sock, uint8_t* pkt){
+  uint32_t seq = get_seq((foggy_tcp_header_t*)pkt);
+  if(sock->window.next_seq_expected > seq){
+    debug_printf("Packets received again\n");
+    return false;
+  }
+  if(sock->window.next_seq_expected == seq){
+    if(sock->window.send_ack_state == NO_PREV_ACK_WAIT){
+      sock->window.send_ack_state = SEQ_PREV_PKT_NOT_ACK;
+      reset_ack_time_out(sock);
+      debug_printf("Sequential arrive, wait for next pkt to ack\n");
+      return false;
+    }
+    else if(sock->window.send_ack_state == SEQ_PREV_PKT_NOT_ACK){
+      sock->window.send_ack_state = NO_PREV_ACK_WAIT;
+      debug_printf("Sequential arrive, send immediately due to prev not-acked pkts\n");
+      sock->window.ack_timeout = time(nullptr);
+      return true;
+    }
+    else if(sock->window.send_ack_state == NOT_SEQ){
+      if(sock->out_of_order_queue.begin()->first == seq + get_payload_len(pkt)){ // gap fully filled
+        sock->window.send_ack_state = NO_PREV_ACK_WAIT;
+        debug_printf("Sequential arrive and fill all gaps, send ack immediately\n");
+      }
+      else{
+        debug_printf("Sequential arrive but not fill all gaps\n");
+        sock->window.send_ack_state = NOT_SEQ;
+      }
+      return true;
+    }
+  }
+  else{
+    debug_printf("Not sequential arrive so send ack immediately\n");
+    sock->window.send_ack_state = NOT_SEQ;
+    return true;
+  }
+
 }
 

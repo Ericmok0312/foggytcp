@@ -16,7 +16,7 @@ from releasing their forks in any public places. */
 
 
 
-#define DEBUG_PRINT 0
+#define DEBUG_PRINT 1
 
 /*
  * DO NOT CHANGE THIS FILE
@@ -29,7 +29,7 @@ from releasing their forks in any public places. */
 
 
 // window variables
-#define WINDOW_INITIAL_WINDOW_SIZE MSS  // original MSS
+#define WINDOW_INITIAL_WINDOW_SIZE MSS * 10  // original MSS
 #define WINDOW_INITIAL_SSTHRESH (MSS * 64)
 #define WINDOW_INITIAL_RTT 3000  // ms
 #define WINDOW_INITIAL_ADVERTISED MSS  // original MSS

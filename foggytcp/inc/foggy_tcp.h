@@ -69,6 +69,13 @@ typedef enum {
   TCP_ACCEPTER = 2, /// TODO Implement this later
 } foggy_socket_type_t;
 
+typedef enum{
+  NO_PREV_ACK_WAIT = 0,
+  SEQ_PREV_PKT_NOT_ACK = 1,
+  NOT_SEQ = 2,
+  FILL_GAP = 3,
+} sock_send_ack_state_t;
+
 typedef struct {
   uint32_t last_byte_sent;
   uint32_t last_ack_received; // The ACK we are waiting for
@@ -87,12 +94,18 @@ typedef struct {
   uint32_t receive_window_end_ptr;
 
   time_t timeout_timer;
+  time_t ack_timeout;
 
   reno_state_t reno_state;
   pthread_mutex_t ack_lock;
 
+  sock_send_ack_state_t send_ack_state;
+
   unordered_set<uint32_t> received_pkt;
 } window_t;
+
+
+
 
 /**
  * This structure holds the state of a socket. You may modify this structure as
