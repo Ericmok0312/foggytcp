@@ -133,7 +133,6 @@ void *begin_backend(void *in) {
       if (check_time_out(sock)){
         debug_printf("Timer reached, closing socket\n");
         while(pthread_mutex_lock(&(sock->death_lock))!=0){
-          debug_printf("Waiting for death lock in begin backend\n");
         }
         sock->dying = 1;
         pthread_mutex_unlock(&(sock->death_lock));
@@ -151,7 +150,6 @@ void *begin_backend(void *in) {
 
     // debug_printf("Backend running, dying %d\n", death);
     while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
-      debug_printf("Waiting for send lock in begin backend\n");
     }
 
     buf_len = sock->sending_len;
@@ -190,30 +188,28 @@ void *begin_backend(void *in) {
     check_for_pkt(sock, NO_WAIT);
 
     while (pthread_mutex_lock(&(sock->recv_lock)) != 0) {
-      debug_printf("Waiting for recv lock in begin backend\n");
     }
     while(pthread_mutex_lock(&(sock->connected_lock)) != 0) {
-      debug_printf("Waiting for connected lock in begin backend\n");
     }
 
     
-    auto now = std::chrono::system_clock::now();
-    time_t current_time = std::chrono::system_clock::to_time_t(now);
+    // auto now = std::chrono::system_clock::now();
+    // time_t current_time = std::chrono::system_clock::to_time_t(now);
 
-    if(sock->window.send_ack_state == SEQ_PREV_PKT_NOT_ACK && sock->window.ack_timeout != time(nullptr) && sock->window.ack_timeout <= current_time){
-      debug_printf("Sending ACK packet due to timeout %u\n", sock->window.next_seq_expected);
-                uint8_t *ack_pkt = create_packet(
-                    sock->my_port, ntohs(sock->conn.sin_port),
-                    sock->window.last_byte_sent, sock->window.next_seq_expected,
-                    sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-                    MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
-                    NULL, NULL, 0);
-                sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
-                      (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-                free(ack_pkt);
-      sock->window.ack_timeout = time(nullptr);
-      sock->window.send_ack_state = NO_PREV_ACK_WAIT;
-    }
+    // if(sock->window.send_ack_state == SEQ_PREV_PKT_NOT_ACK && sock->window.ack_timeout != time(nullptr) && sock->window.ack_timeout <= current_time){
+    //   debug_printf("Sending ACK packet due to timeout %u\n", sock->window.next_seq_expected);
+    //             uint8_t *ack_pkt = create_packet(
+    //                 sock->my_port, ntohs(sock->conn.sin_port),
+    //                 sock->window.last_byte_sent, sock->window.next_seq_expected,
+    //                 sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
+    //                 MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+    //                 NULL, NULL, 0);
+    //             sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
+    //                   (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
+    //             free(ack_pkt);
+    //   sock->window.ack_timeout = time(nullptr);
+    //   sock->window.send_ack_state = NO_PREV_ACK_WAIT;
+    // }
 
     send_signal = sock->received_len > 0 || sock->connected == 4;
 

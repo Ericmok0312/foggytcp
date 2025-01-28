@@ -90,8 +90,8 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
   sock->window.send_ack_state = NO_PREV_ACK_WAIT;
 
-  // sock->window.receive_window_start_ptr = 0;
-  // sock->window.receive_window_end_ptr = 0 // end_ptr pointing to first available slot
+  sock->window.receive_window_start_ptr = 0;
+  sock->window.receive_window_end_ptr = 0; // end_ptr pointing to first available slot
 
   pthread_mutex_init(&(sock->window.ack_lock), NULL);
 
@@ -181,25 +181,40 @@ int foggy_close(void *in_sock) {
   // while(sock->window.last_ack_received < sock->window.last_byte_sent){
   //   usleep(100000);
   // }
-
-
-  while(!after(sock->window.last_ack_received, sock->window.last_byte_sent-1)){ // checking for all byte acked, prevent overflow
-    usleep(1000);
-  }
+ 
   // Send FIN packet to the other side
-  // while(pthread_mutex_lock(&(sock->death_lock)) != 0){
-  // }
+  while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+  }
+  while(pthread_mutex_lock(&(sock->send_lock)) != 0){
+  }
+
+  while(!after(sock->window.last_ack_received, sock->window.last_byte_sent - 1)){ // checking for all byte acked, prevent overflow
+    
+    pthread_mutex_unlock(&(sock->death_lock));
+    pthread_mutex_unlock(&(sock->send_lock));
+    usleep(1000);
+    while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+    }
+    while(pthread_mutex_lock(&(sock->send_lock)) != 0){
+    }
+  }
+
+  pthread_mutex_unlock(&(sock->death_lock));
+  pthread_mutex_unlock(&(sock->send_lock));
+
+  while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+  }
   while(pthread_mutex_lock(&(sock->send_lock)) != 0){
   }
   if(sock->dying != 1){
     debug_printf("sending fin in close foggy\n");
-    
+    pthread_mutex_unlock(&(sock->death_lock));
     send_pkts(sock, NULL, 0, FIN_FLAG_MASK); // which will set connected to 3
-
-    debug_printf("sended fin in close foggy\n");
-
+    while(pthread_mutex_lock(&(sock->death_lock)) != 0){
+    }
   }
-  // pthread_mutex_unlock(&(sock->death_lock));
+  
+  pthread_mutex_unlock(&(sock->death_lock));
   pthread_mutex_unlock(&(sock->send_lock));
 
 

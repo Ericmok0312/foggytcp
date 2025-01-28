@@ -95,7 +95,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           free(syn_ack_pkt);
 
           debug_printf("Currently Slow Start State\n");
-          sock->window.congestion_window + MSS;
+          sock->window.congestion_window += MSS;
           if(sock->window.congestion_window >= sock->window.ssthresh){
             sock->window.reno_state = RENO_CONGESTION_AVOIDANCE;
             debug_printf("Setting state to congestion avoidance state\n");
@@ -110,7 +110,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               sock->window.last_byte_sent,    // Acknowledge the FIN packet
               get_seq(hdr) + 1,
               sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-              MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
+              MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, 0), 0, NULL, NULL, 0);
           sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
                 (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
           free(fin_ack_pkt);
@@ -119,7 +119,6 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
 
           // Update the state to indicate that the connection is closing
           while (pthread_mutex_lock(&(sock->connected_lock)) != 0) {
-            debug_printf("Waiting for conn lock in on recv pkt\n");
           } 
           if(sock->connected == 2){
             sock->connected = 4;
@@ -131,7 +130,6 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           }
           pthread_mutex_unlock(&(sock->connected_lock));
           while (pthread_mutex_lock(&(sock->death_lock)) != 0){
-            debug_printf("Waiting for death lock in on recv pkt\n");
           }
           if(sock->dying == 3){ // client receiving FIN-ACK from server
             sock->dying = 2;  // entering the stage for counting down
@@ -148,17 +146,17 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           // if (get_payload_len(pkt) == 0) handle_congestion_window(sock, pkt);
           sock->window.advertised_window = get_advertised_window(hdr); //getting the amount of data the receiver can accept
           debug_printf("Setting advertised window to %d\n", sock->window.advertised_window);
-          // while (pthread_mutex_lock(&(sock->window.ack_lock)) != 0)
-          // {
-          //   debug_printf("Waiting for ack lock in on recv pkt\n");
-          // }
+          while (pthread_mutex_lock(&(sock->window.ack_lock)) != 0)
+          {
+          }
+          while (pthread_mutex_lock(&(sock->connected_lock)) != 0)
+          {
+          }
           if (after(ack, sock->window.last_ack_received)) { 
               sock->window.last_ack_received = ack;                           
               if(sock->connected == 3) {
                   while(pthread_mutex_lock(&(sock->death_lock)) != 0){
-                    debug_printf("Waiting for death lock in on recv pkt, ack\n");
                   } 
-
                   if(sock->dying != 3){
                     sock->dying = 2; // dying 3, indicating the state for only receiving packets
                   }
@@ -172,9 +170,10 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               }
               else if((sock->connected == 4 && sock->dying == 3)){
                 while(pthread_mutex_lock(&(sock->death_lock)) != 0){
-                }
+               }
                 sock->dying = 1; // immediate close
                 sock->connected = 0;
+
                 pthread_mutex_unlock(&(sock->death_lock));
                 reset_time_out(sock);
                 debug_printf("Receive FIN-ACK %u\n", get_ack(hdr));
@@ -197,14 +196,14 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
             }
             if(sock->window.dup_ack_count == 3){
               debug_printf("Duplicate ACK for 3 Times\n");
-              sock->window.ssthresh = sock->window.ssthresh/2;
+              sock->window.ssthresh = (uint32_t)sock->window.ssthresh/2u;
               sock->window.congestion_window = sock->window.ssthresh + 3*MSS;
               sock->window.reno_state = RENO_FAST_RECOVERY;
               debug_printf("Entering Fast Recovery state, congestion window: %d, ssthresh: %d\n", sock->window.congestion_window, sock->window.ssthresh);
               resend(sock);
             }
           }
-          // pthread_mutex_unlock(&(sock->window.ack_lock));
+
           if(sock->connected == 1) {
               sock->connected = 2; // connection established
           }
@@ -212,16 +211,15 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           /// updating congestion window according to sock state
           if(sock->window.reno_state == RENO_SLOW_START){
             debug_printf("Currently Slow Start State\n");
-            sock->window.congestion_window += MSS;
+            sock->window.congestion_window = sock->window.congestion_window + MSS;
             if(sock->window.congestion_window >= sock->window.ssthresh){
               sock->window.reno_state = RENO_CONGESTION_AVOIDANCE;
               debug_printf("Setting state to congestion avoidance state\n");
             }
-
           }
           else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE){
-            debug_printf("Currently Congestion Avoidance state\n");
-            sock->window.congestion_window += MSS/sock->window.congestion_window*MSS;
+            debug_printf("Currently Congestion Avoidance state, old congestion window: %d\n", sock->window.congestion_window);
+            sock->window.congestion_window += (uint32_t) (MSS *(MSS / sock->window.congestion_window));
           }
           else if(sock->window.reno_state == RENO_FAST_RECOVERY){
             debug_printf("Currently FAST RECOVERY state\n");
@@ -232,7 +230,8 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
             }
           }
           debug_printf("Setting congestion window to %d\n", sock->window.congestion_window);
-
+          pthread_mutex_unlock(&(sock->window.ack_lock));
+          pthread_mutex_unlock(&(sock->connected_lock));
       } 
       // Fallthrough
       default: {
@@ -240,15 +239,16 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               debug_printf("Received data packet %u %u\n", get_seq(hdr),
                           get_seq(hdr) + get_payload_len(pkt));
 
-              sock->window.advertised_window = get_advertised_window(hdr);
-              debug_printf("Setting advertised_window to %ds\n", sock->window.advertised_window);
+              // sock->window.advertised_window = get_advertised_window(hdr);
+              // debug_printf("Setting advertised_window to %d\n", sock->window.advertised_window);
               // Add the packet to receive window and process receive window
-              bool send_ack = check_send_ack(sock, pkt);
+              //bool send_ack = check_send_ack(sock, pkt);
 
               add_receive_window(sock, pkt); 
               process_receive_window(sock);
               // Send ACK
-              if(send_ack){
+              
+              if(true){
                 debug_printf("Sending ACK packet %u\n", sock->window.next_seq_expected);
                 uint8_t *ack_pkt = create_packet(
                     sock->my_port, ntohs(sock->conn.sin_port),
@@ -280,6 +280,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
  */
 void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
   uint8_t *data_offset = data;
+  
   transmit_send_window(sock);
   if (buf_len > 0) {
     while (buf_len != 0) {
@@ -317,7 +318,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
     sock->window.last_byte_sent += 1;
     // free(slot.msg);
     while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
-      debug_printf("waiting connected_lock in send pkts\n");
+
     }
     while(pthread_mutex_lock(&(sock->death_lock)) != 0){
     }
@@ -333,6 +334,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
     debug_printf("Sended FIN %u\n", sock->window.last_byte_sent);
   }
   receive_send_window(sock);
+
 }
 
 
@@ -476,14 +478,14 @@ void transmit_send_window(foggy_socket_t *sock) {
       //debug_printf("Reach congestion window limit\n");
       break;
     }
-    if(sock->window.advertised_window < payload_len) {
+    if(sock->window.advertised_window <  get_seq((foggy_tcp_header_t*) next_slot.msg) + payload_len - sock->window.last_ack_received) {
       //debug_printf("Reach advertised window limit\n");
       break;
     }
 
     // Update the window used size and advertised window size
     sock->window.window_used += payload_len;
-    sock->window.advertised_window -= payload_len;
+    //sock->window.advertised_window -= payload_len;
 
     // Get the current slot and header
     foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)next_slot.msg;
@@ -559,45 +561,46 @@ inline void resend(foggy_socket_t *sock){
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)packet.msg;
   debug_printf("Trigger resend, sending seq %d\n", get_seq(hdr));
   sendto(sock->socket, packet.msg, get_plen(hdr), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-  reset_time_out(sock);
+  sock->window.dup_ack_count = 0;
+  //reset_time_out(sock);
 }
 
 inline void reset_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
-  auto new_time = now + std::chrono::milliseconds(3000);
+  auto new_time = now + std::chrono::milliseconds(1000);
   sock->window.timeout_timer = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
-  debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
+  //debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
 }
 
 inline bool check_time_out(foggy_socket_t *sock){
-  auto now = std::chrono::system_clock::now();
-  time_t current_time = std::chrono::system_clock::to_time_t(now);
-  if(sock->window.timeout_timer != time(nullptr) && sock->window.timeout_timer <= current_time ){
-    debug_printf("Time out \n");
-    if(sock->window.reno_state == RENO_SLOW_START){
-      debug_printf("Currently Slow start state, setting ssthresh to: %d, congestion window to MSS\n", sock->window.congestion_window/2);
-      sock->window.ssthresh = sock->window.congestion_window/2;
-      sock->window.congestion_window = MSS;
-      sock->window.dup_ack_count = 0;
-    }
-    else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE || sock->window.reno_state == RENO_FAST_RECOVERY){
-      debug_printf("Currently congestion avoidance state or fast recovery state, setting ssthresh to: %d, congestion window to MSS, state to slow start state\n", sock->window.congestion_window/2);
-      sock->window.reno_state = RENO_SLOW_START;
-      sock->window.ssthresh = sock->window.congestion_window/2;
-      sock->window.congestion_window = MSS;
-      sock->window.dup_ack_count = 0;
-    }
-    return true;
-  }
-  else{
-    return false;
-  }
-  // return false;
+  // auto now = std::chrono::system_clock::now();
+  // time_t current_time = std::chrono::system_clock::to_time_t(now);
+  // if(sock->window.timeout_timer != time(nullptr) && sock->window.timeout_timer <= current_time ){
+  //   debug_printf("Time out \n");
+  //   if(sock->window.reno_state == RENO_SLOW_START){
+  //     debug_printf("Currently Slow start state, setting ssthresh to: %d, congestion window to MSS\n", sock->window.congestion_window/2);
+  //     sock->window.ssthresh = sock->window.congestion_window/2;
+  //     sock->window.congestion_window = MSS;
+  //     sock->window.dup_ack_count = 0;
+  //   }
+  //   else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE || sock->window.reno_state == RENO_FAST_RECOVERY){
+  //     debug_printf("Currently congestion avoidance state or fast recovery state, setting ssthresh to: %d, congestion window to MSS, state to slow start state\n", sock->window.congestion_window/2);
+  //     sock->window.reno_state = RENO_SLOW_START;
+  //     sock->window.ssthresh = sock->window.congestion_window/2;
+  //     sock->window.congestion_window = MSS;
+  //     sock->window.dup_ack_count = 0;
+  //   }
+  //   return true;
+  // }
+  // else{
+  //   return false;
+  // }
+  return false;
 }
 
 inline void reset_ack_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
-  auto new_time = now + std::chrono::milliseconds(3000);
+  auto new_time = now + std::chrono::milliseconds(1000);
   sock->window.ack_timeout = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
   debug_printf("Setting ack timeout to %ld \n", sock->window.ack_timeout);
 }
