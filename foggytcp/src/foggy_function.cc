@@ -40,8 +40,9 @@ from releasing their forks in any public places. */
  * @param pkt The packet data received by the socket.
  */
 void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
-  debug_printf("Received packet\n");
+
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)pkt;
+  debug_printf("Received packet seq: %d, ack: %d\n", get_seq(hdr), get_ack(hdr));
   uint8_t flags = get_flags(hdr);
   switch (flags) {
       case SYN_FLAG_MASK: {
@@ -60,7 +61,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               sock->window.last_byte_sent,  // Telling the client that we are ready to receive, and the initial seq number
               get_seq(hdr) + 1,
               sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), SYN_FLAG_MASK | ACK_FLAG_MASK,
-              MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
+              MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0, NULL, NULL, 0);
           sendto(sock->socket, syn_ack_pkt, sizeof(foggy_tcp_header_t), 0,
                 (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
           
@@ -89,7 +90,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               sock->window.last_byte_sent,  // Telling the client that we are ready to receive, and the initial seq number
               get_seq(hdr) + 1,
               sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-              MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL, NULL, 0);
+              MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0, NULL, NULL, 0);
           sendto(sock->socket, syn_ack_pkt, sizeof(foggy_tcp_header_t), 0,
                 (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
           free(syn_ack_pkt);
@@ -110,7 +111,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               sock->window.last_byte_sent,    // Acknowledge the FIN packet
               get_seq(hdr) + 1,
               sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-              MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, 0), 0, NULL, NULL, 0);
+              MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0, NULL, NULL, 0);
           sendto(sock->socket, fin_ack_pkt, sizeof(foggy_tcp_header_t), 0,
                 (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
           free(fin_ack_pkt);
@@ -187,7 +188,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
             if(!sock->send_window.empty()){
               sock->window.dup_ack_count++;
               if(sock->window.reno_state != RENO_FAST_RECOVERY){
-                sock->window.congestion_window--; // -- for cancel out ++ later
+                sock->window.congestion_window = MAX(sock->window.congestion_window - 1, 1u); // Ensure congestion window is at least 1
               }
               else{
                 sock->window.congestion_window++;
@@ -196,11 +197,13 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
             }
             if(sock->window.dup_ack_count == 3){
               debug_printf("Duplicate ACK for 3 Times\n");
-              sock->window.ssthresh = (uint32_t)sock->window.ssthresh/2u;
+                sock->window.ssthresh = MAX(sock->window.congestion_window / 2, 1u);
               sock->window.congestion_window = sock->window.ssthresh + 3*MSS;
               sock->window.reno_state = RENO_FAST_RECOVERY;
               debug_printf("Entering Fast Recovery state, congestion window: %d, ssthresh: %d\n", sock->window.congestion_window, sock->window.ssthresh);
-              resend(sock);
+              pthread_mutex_unlock(&(sock->window.ack_lock));
+              pthread_mutex_unlock(&(sock->connected_lock));
+              return;
             }
           }
 
@@ -229,7 +232,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               debug_printf("Setting state to Congestion Avoidanc\n");
             }
           }
-          debug_printf("Setting congestion window to %d\n", sock->window.congestion_window);
+          debug_printf("Setting congestion window to %d, ssthresh: %d\n", sock->window.congestion_window, sock->window.ssthresh);
           pthread_mutex_unlock(&(sock->window.ack_lock));
           pthread_mutex_unlock(&(sock->connected_lock));
       } 
@@ -249,12 +252,12 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
               // Send ACK
               
               if(true){
-                debug_printf("Sending ACK packet %u\n", sock->window.next_seq_expected);
+                debug_printf("Sending ACK packet %u with advertised window size: %u\n", sock->window.next_seq_expected, MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS));
                 uint8_t *ack_pkt = create_packet(
                     sock->my_port, ntohs(sock->conn.sin_port),
                     sock->window.last_byte_sent, sock->window.next_seq_expected,
                     sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-                    MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+                    MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0,
                     NULL, NULL, 0);
                 sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
                       (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
@@ -280,12 +283,10 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
  */
 void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
   uint8_t *data_offset = data;
-  
   transmit_send_window(sock);
   if (buf_len > 0) {
     while (buf_len != 0) {
       uint16_t payload_len = MIN(buf_len, (int)MSS);
-
       send_window_slot_t slot;
       slot.is_sent = 0;
       slot.msg = create_packet(
@@ -293,9 +294,9 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
           sock->window.last_byte_sent, sock->window.next_seq_expected,
           sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t) + payload_len,
           flags,
-          MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
+          MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0, NULL,
           data_offset, payload_len);
-      sock->send_window.push_back(slot);
+      sock->send_window.emplace_back(move(slot));
 
       buf_len -= payload_len;
       data_offset += payload_len;
@@ -310,7 +311,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
         sock->window.last_byte_sent, sock->window.next_seq_expected,
         sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t),
         FIN_FLAG_MASK,
-        MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0, NULL,
+        MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0, NULL,
         NULL, 0);
 
     sock->send_window.emplace_back(move(slot));
@@ -318,7 +319,6 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
     sock->window.last_byte_sent += 1;
     // free(slot.msg);
     while(pthread_mutex_lock(&(sock->connected_lock))!=0){      
-
     }
     while(pthread_mutex_lock(&(sock->death_lock)) != 0){
     }
@@ -347,8 +347,12 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
     return;
   }
   // Check if the packet is within the receive window
-  if (before(p_seq, sock->window.next_seq_expected) || after(p_end, sock->window.next_seq_expected + MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS))) {
-    debug_printf("Packets not in receive window seq: %d\n", p_seq);
+  if (before(p_seq, sock->window.next_seq_expected)) {
+    debug_printf("Packets before receive window seq: %d\n", p_seq);
+    return; // packet not in receive window
+  }
+  if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER){
+    debug_printf("Packets after receive window seq: %d\n", p_seq);
     return; // packet not in receive window
   }
 
@@ -466,8 +470,10 @@ void process_receive_window(foggy_socket_t *sock) {
 void transmit_send_window(foggy_socket_t *sock) {
   // Check if there are no new packets to process
   if (sock->send_window.empty() || sock->window.last_sent_pos == sock->send_window.size() - 1) {
+    //debug_printf("Reached here\n");
     return;
   }
+
 
   // Process the send window
   while (true) {
@@ -517,13 +523,12 @@ void receive_send_window(foggy_socket_t *sock) {
   //debug_printf("Called here\n");
 
   // Timeout resend
-  if (check_time_out(sock) && !sock->send_window.empty()) {
-    debug_printf("Timeout reached, resending packet %u\n", get_seq((foggy_tcp_header_t*)sock->send_window.front().msg));
+  if (check_time_out(sock) && !sock->send_window.empty() || sock->window.dup_ack_count == 3) {
+    debug_printf("Timeout reached or duplicate ACK = 3, resending packet %u\n", get_seq((foggy_tcp_header_t*)sock->send_window.front().msg));
     resend(sock);
     return;
   }
   
-
   // Pop out the packets that have been ACKed
   bool checked = false;
   while (1) {
@@ -533,6 +538,7 @@ void receive_send_window(foggy_socket_t *sock) {
     foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)slot.msg;
 
     if (slot.is_sent == 0 || slot.msg == nullptr) {
+      debug_printf("reached here\n");
       break;
     }
     if (has_been_acked(sock, get_seq(hdr)) == 0) {
@@ -561,13 +567,13 @@ inline void resend(foggy_socket_t *sock){
   foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)packet.msg;
   debug_printf("Trigger resend, sending seq %d\n", get_seq(hdr));
   sendto(sock->socket, packet.msg, get_plen(hdr), 0, (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
-  sock->window.dup_ack_count = 0;
+  //sock->window.dup_ack_count = 0;
   //reset_time_out(sock);
 }
 
 inline void reset_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
-  auto new_time = now + std::chrono::milliseconds(1000);
+  auto new_time = now + std::chrono::milliseconds(6000);
   sock->window.timeout_timer = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
   //debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
 }
@@ -579,15 +585,21 @@ inline bool check_time_out(foggy_socket_t *sock){
   //   debug_printf("Time out \n");
   //   if(sock->window.reno_state == RENO_SLOW_START){
   //     debug_printf("Currently Slow start state, setting ssthresh to: %d, congestion window to MSS\n", sock->window.congestion_window/2);
-  //     sock->window.ssthresh = sock->window.congestion_window/2;
+  //     sock->window.ssthresh = MAX(sock->window.congestion_window / 2, 1);
   //     sock->window.congestion_window = MSS;
   //     sock->window.dup_ack_count = 0;
   //   }
-  //   else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE || sock->window.reno_state == RENO_FAST_RECOVERY){
-  //     debug_printf("Currently congestion avoidance state or fast recovery state, setting ssthresh to: %d, congestion window to MSS, state to slow start state\n", sock->window.congestion_window/2);
+  //   else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE){
+  //     debug_printf("Currently congestion avoidance state state, setting ssthresh to: %d, congestion window to MSS, state to slow start state\n", sock->window.congestion_window/2);
   //     sock->window.reno_state = RENO_SLOW_START;
-  //     sock->window.ssthresh = sock->window.congestion_window/2;
+  //     sock->window.ssthresh = MAX(sock->window.congestion_window / 2, 1);
   //     sock->window.congestion_window = MSS;
+  //     sock->window.dup_ack_count = 0;
+  //   }
+  //   else if(sock->window.reno_state == RENO_FAST_RECOVERY){
+  //     sock->window.reno_state = RENO_SLOW_START;
+  //     sock->window.ssthresh = MAX(sock->window.congestion_window / 2, 1);
+  //     sock->window.congestion_window = 1;
   //     sock->window.dup_ack_count = 0;
   //   }
   //   return true;

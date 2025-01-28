@@ -119,7 +119,10 @@ void *begin_backend(void *in) {
   int death, buf_len, send_signal;
   uint8_t *data;
   while (1) {
-    //debug_printf("Current states connected: %d, death: %d \n", sock->connected, sock->dying);
+    // if(sock->type == TCP_INITIATOR){
+    //   debug_printf("Current states connected: %d, death: %d \n", sock->connected, sock->dying);
+    // }
+
 
     while (pthread_mutex_lock(&(sock->death_lock)) != 0) {
       debug_printf("Waiting for dying lock in begin backend\n");
@@ -158,6 +161,11 @@ void *begin_backend(void *in) {
       send_pkts(sock, NULL, 0);
       check_for_pkt(sock, NO_WAIT);
     }
+    // else{
+    //     if(sock->type == TCP_INITIATOR){
+    //     debug_printf("Nothing to send\n");
+    //   }
+    // }
 
 
     if (death == 1 && buf_len == 0 && sock->send_window.empty()) { // when the three condition is true, then the socket is destroyed
@@ -202,7 +210,7 @@ void *begin_backend(void *in) {
     //                 sock->my_port, ntohs(sock->conn.sin_port),
     //                 sock->window.last_byte_sent, sock->window.next_seq_expected,
     //                 sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), ACK_FLAG_MASK,
-    //                 MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+    //                 MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0,
     //                 NULL, NULL, 0);
     //             sendto(sock->socket, ack_pkt, sizeof(foggy_tcp_header_t), 0,
     //                   (struct sockaddr *)&(sock->conn), sizeof(sock->conn));
@@ -287,7 +295,7 @@ void foggy_connect(foggy_socket_t *sock) {
                   sock->my_port, ntohs(sock->conn.sin_port),
                   sock->window.last_byte_sent, sock->window.next_seq_expected,
                   sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t), SYN_FLAG_MASK,
-                  MAX(MAX_NETWORK_BUFFER - (uint32_t)sock->received_len, MSS), 0,
+                  MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0,
                   NULL, NULL, 0);
 
   sendto(sock->socket, syn_pkt, sizeof(foggy_tcp_header_t), 0,

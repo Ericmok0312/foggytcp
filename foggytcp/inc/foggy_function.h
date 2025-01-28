@@ -58,3 +58,5 @@ void reset_ack_time_out(foggy_socket_t* sock);
 bool check_ack_time_out(foggy_socket_t* sock);
 
 bool check_send_ack(foggy_socket_t* sock, uint8_t* pkt);
+
+static void process_sequential_packets(foggy_socket_t *sock);

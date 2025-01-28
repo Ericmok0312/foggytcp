@@ -36,7 +36,7 @@ using namespace std;
 #define EXIT_FAILURE 1
 
 /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
-#define RECEIVE_WINDOW_SLOT_SIZE 256
+#define RECEIVE_WINDOW_SLOT_SIZE 64
 
 
 #define TIMEOUT_SECONDS 
@@ -152,18 +152,9 @@ struct foggy_socket_t {
   /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */
   deque<send_window_slot_t> send_window;
   map<uint32_t, uint8_t*> out_of_order_queue;
+    // map<uint32_t, uint8_t*> out_of_order_queue;
 
   receive_window_slot_t receive_window[RECEIVE_WINDOW_SLOT_SIZE];
-
-
-
-  struct ReceiveWindowComparator {
-    bool operator()(const receive_window_slot_t& lhs, const receive_window_slot_t& rhs) const {
-      return before(get_seq((foggy_tcp_header_t*)lhs.msg), get_seq((foggy_tcp_header_t*)rhs.msg));
-    }
-  };
-
-  priority_queue<receive_window_slot_t, vector<receive_window_slot_t>, ReceiveWindowComparator> not_sequential_receive_window;
 
   
 
