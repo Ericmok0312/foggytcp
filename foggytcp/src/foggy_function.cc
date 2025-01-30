@@ -187,8 +187,11 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           else if (ack==sock->window.last_ack_received){
             if(!sock->send_window.empty()){
               sock->window.dup_ack_count++;
-              if(sock->window.reno_state != RENO_FAST_RECOVERY){
-                sock->window.congestion_window = MAX(sock->window.congestion_window - 1, 1u); // Ensure congestion window is at least 1
+              if(sock->window.reno_state == RENO_SLOW_START){
+                sock->window.congestion_window = sock->window.congestion_window - MSS; // Ensure congestion window is at least 1
+              }
+              else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE){
+                sock->window.congestion_window = sock->window.congestion_window - (uint32_t) (MSS*MSS/sock->window.congestion_window); // Ensure congestion window is at least 1
               }
               else{
                 sock->window.congestion_window++;
@@ -222,7 +225,8 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           }
           else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE){
             debug_printf("Currently Congestion Avoidance state, old congestion window: %d\n", sock->window.congestion_window);
-            sock->window.congestion_window += (uint32_t) (MSS *(MSS / sock->window.congestion_window));
+            sock->window.congestion_window += (uint32_t) (MSS*MSS/sock->window.congestion_window);
+            debug_printf("Adding %d to congestion window.\n", (MSS*MSS/sock->window.congestion_window));
           }
           else if(sock->window.reno_state == RENO_FAST_RECOVERY){
             debug_printf("Currently FAST RECOVERY state\n");
