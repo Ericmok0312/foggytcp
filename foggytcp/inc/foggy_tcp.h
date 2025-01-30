@@ -189,7 +189,7 @@ typedef enum {
  * @return 0 on success, -1 on error.
  */
 void* foggy_socket(const foggy_socket_type_t socket_type,
-               const char* port, const char* server_ip);
+               const char* port, const char* server_ip, bool test = false);
 
 /**
  * Closes a CMU-TCP socket.

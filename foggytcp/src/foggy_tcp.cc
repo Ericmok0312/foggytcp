@@ -33,7 +33,7 @@ from releasing their forks in any public places. */
   } while (0)
 
 void* foggy_socket(const foggy_socket_type_t socket_type,
-               const char *server_port, const char *server_ip) {
+               const char *server_port, const char *server_ip, bool test) {
 
   foggy_socket_t* sock = new foggy_socket_t;
   int sockfd, optval;
@@ -62,6 +62,7 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
 
   sock->connected = 0;
   pthread_mutex_init(&(sock->connected_lock), NULL);
+  sock->thread_id = 0;
 
   // FIXME: Sequence numbers should be randomly initialized. The next expected
   // sequence number should be initialized according to the SYN packet from the
@@ -162,7 +163,9 @@ void* foggy_socket(const foggy_socket_type_t socket_type,
   getsockname(sockfd, (struct sockaddr *)&my_addr, &len);
   sock->my_port = ntohs(my_addr.sin_port);
 
-  pthread_create(&(sock->thread_id), NULL, begin_backend, (void *)sock);
+  if(!test){
+    pthread_create(&(sock->thread_id), NULL, begin_backend, (void *)sock);
+  }
   return (void*)sock;
 }
 
@@ -225,7 +228,10 @@ int foggy_close(void *in_sock) {
 
   debug_printf("Closing thread\n");
   // Wait for the backend thread to finish
-  pthread_join(sock->thread_id, NULL);
+  if(sock->thread_id){
+    pthread_join(sock->thread_id, NULL);
+  }
+
   debug_printf("Thread closed\n");
 
   // Clean up resources

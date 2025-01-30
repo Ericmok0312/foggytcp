@@ -285,7 +285,7 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
  * @param data The data to be sent.
  * @param buf_len The length of the data being sent.
  */
-void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
+void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flag) {
   uint8_t *data_offset = data;
   transmit_send_window(sock);
   if (buf_len > 0) {
@@ -297,7 +297,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
           sock->my_port, ntohs(sock->conn.sin_port),
           sock->window.last_byte_sent, sock->window.next_seq_expected,
           sizeof(foggy_tcp_header_t), sizeof(foggy_tcp_header_t) + payload_len,
-          flags,
+          flag,
           MAX(MAX_NETWORK_BUFFER - (uint16_t)sock->received_len, (uint16_t)MSS), 0, NULL,
           data_offset, payload_len);
       sock->send_window.emplace_back(move(slot));
@@ -306,7 +306,7 @@ void send_pkts(foggy_socket_t *sock, uint8_t *data, int buf_len, int flags) {
       data_offset += payload_len;
       sock->window.last_byte_sent += payload_len;
     }
-  } else if (flags == FIN_FLAG_MASK) {
+  } else if (flag == FIN_FLAG_MASK) {
     debug_printf("Start Send FIN %u\n", sock->window.last_byte_sent);
     send_window_slot_t slot;
     slot.is_sent = 0;
@@ -355,7 +355,7 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
     debug_printf("Packets before receive window seq: %d\n", p_seq);
     return; // packet not in receive window
   }
-  if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER){
+  if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER - sock->received_len){
     debug_printf("Packets after receive window seq: %d\n", p_seq);
     return; // packet not in receive window
   }
@@ -577,9 +577,9 @@ inline void resend(foggy_socket_t *sock){
 
 inline void reset_time_out(foggy_socket_t *sock){
   auto now = std::chrono::system_clock::now();
-  auto new_time = now + std::chrono::milliseconds(6000);
+  auto new_time = now + std::chrono::milliseconds(1000);
   sock->window.timeout_timer = std::chrono::system_clock::to_time_t(new_time); // Update the send time to current time, might need to change later
-  //debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
+  debug_printf("Setting timeout to %ld \n", sock->window.timeout_timer);
 }
 
 inline bool check_time_out(foggy_socket_t *sock){

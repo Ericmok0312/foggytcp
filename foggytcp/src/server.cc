@@ -44,11 +44,14 @@ int main(int argc, const char* argv[]) {
   const char* server_port = argv[2];
   const char* filename = argv[3];
 
+
   /* Create a listener socket */
+      
+        /* code */
   void* sock = foggy_socket(TCP_LISTENER, server_port, server_ip);
 
   /* Open the output file. If the file can't be opened, print an error message
-   * and return -1 */
+  * and return -1 */
   ofstream ofs(filename);
   if (!ofs) {
     cerr << "Error: Can't open \"" << filename << "\"\n";
@@ -58,18 +61,18 @@ int main(int argc, const char* argv[]) {
   char buf[BUF_SIZE];
   while (true) {
     /* Read data from the socket into the buffer. The amount of data read is
-     * stored in bytes_read. If bytes_read is less than or equal to 0, it means
-     * we've reached the end of transmission or an error occurred. We break out
-     * of the loop */
+    * stored in bytes_read. If bytes_read is less than or equal to 0, it means
+    * we've reached the end of transmission or an error occurred. We break out
+    * of the loop */
     int bytes_read = foggy_read(sock, buf, BUF_SIZE);
     if (bytes_read <= 0){
       debug_printf("Terminate Bytes read: %d\n", bytes_read);
       break;
     }
-    debug_printf("Bytes read: %d\n", bytes_read);
+    //debug_printf("Bytes read: %d\n", bytes_read);
 
     /* Write the data read from the socket into the file. We write exactly
-     * bytesRead number of bytes */
+    * bytesRead number of bytes */
     ofs.write((char*)buf, bytes_read);
     //usleep(1000);
   }
@@ -78,8 +81,9 @@ int main(int argc, const char* argv[]) {
   // debug_printf("calling foggy_close\n");
   foggy_close(sock);
   ofs.close();
+  
 
-  cout << "Done: Transmitted \"" << filename << "\"\n";
+  cout << "Done: Transmitted \"" << filename << "\" \n";
 
   return 0;
 }
