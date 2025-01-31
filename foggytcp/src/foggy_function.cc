@@ -187,20 +187,22 @@ void on_recv_pkt(foggy_socket_t *sock, uint8_t *pkt) {
           else if (ack==sock->window.last_ack_received){
             if(!sock->send_window.empty()){
               sock->window.dup_ack_count++;
-              if(sock->window.reno_state == RENO_SLOW_START){
+              if(sock->window.reno_state == RENO_SLOW_START && sock->window.dup_ack_count != 3){
                 sock->window.congestion_window = sock->window.congestion_window - MSS; // Ensure congestion window is at least 1
+
               }
-              else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE){
+              else if(sock->window.reno_state == RENO_CONGESTION_AVOIDANCE && sock->window.dup_ack_count != 3){
                 sock->window.congestion_window = sock->window.congestion_window - (uint32_t) (MSS*MSS/sock->window.congestion_window); // Ensure congestion window is at least 1
               }
-              else{
-                sock->window.congestion_window++;
+              else if(sock->window.reno_state == RENO_FAST_RECOVERY){
+                sock->window.congestion_window += MSS;
+                sock->window.dup_ack_count--;
               }
               debug_printf("Duplicate ACK +1\n");
             }
-            if(sock->window.dup_ack_count == 3){
+            if(sock->window.dup_ack_count == 3 && sock->window.reno_state != RENO_FAST_RECOVERY){
               debug_printf("Duplicate ACK for 3 Times\n");
-                sock->window.ssthresh = MAX(sock->window.congestion_window / 2, 1u);
+              sock->window.ssthresh = MAX(sock->window.congestion_window / 2, 1u);
               sock->window.congestion_window = sock->window.ssthresh + 3*MSS;
               sock->window.reno_state = RENO_FAST_RECOVERY;
               debug_printf("Entering Fast Recovery state, congestion window: %d, ssthresh: %d\n", sock->window.congestion_window, sock->window.ssthresh);
@@ -355,8 +357,8 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
     debug_printf("Packets before receive window seq: %d\n", p_seq);
     return; // packet not in receive window
   }
-  if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER - sock->received_len){
-    debug_printf("Packets after receive window seq: %d\n", p_seq);
+  if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER - sock->received_len){ // changed from if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER)
+    debug_printf("Packets after receive window seq: %d\n", p_seq); 
     return; // packet not in receive window
   }
 
@@ -542,7 +544,7 @@ void receive_send_window(foggy_socket_t *sock) {
     foggy_tcp_header_t *hdr = (foggy_tcp_header_t *)slot.msg;
 
     if (slot.is_sent == 0 || slot.msg == nullptr) {
-      debug_printf("reached here\n");
+      //debug_printf("reached here\n");
       break;
     }
     if (has_been_acked(sock, get_seq(hdr)) == 0) {
