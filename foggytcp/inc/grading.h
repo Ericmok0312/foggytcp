@@ -16,7 +16,7 @@ from releasing their forks in any public places. */
 
 
 
-#define DEBUG_PRINT 1
+#define DEBUG_PRINT 0
 
 /*
  * DO NOT CHANGE THIS FILE

@@ -1,15 +1,2 @@
-Transmission took 0 ms
-Transmission took 0 ms
-Transmission took 0 ms
-Transmission took 23 ms
-Transmission took 116 ms
-Transmission took 5681 ms
-Transmission took 258 ms
-Transmission took 114 ms
-Transmission took 112 ms
-Transmission took 115 ms
-Transmission took 75 ms
-Transmission took 64 ms
-Transmission took 111 ms
-Transmission took 218 ms
+Server output: ==> server: Waiting for cleanup before exiting...
 

@@ -357,7 +357,7 @@ void add_receive_window(foggy_socket_t *sock, uint8_t *pkt) {
     debug_printf("Packets before receive window seq: %d\n", p_seq);
     return; // packet not in receive window
   }
-  if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER - sock->received_len){ // changed from if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER)
+  if (p_end - sock->window.next_seq_expected > MAX(MAX_NETWORK_BUFFER - sock->received_len, MSS)){ // changed from if (p_end - sock->window.next_seq_expected > MAX_NETWORK_BUFFER)
     debug_printf("Packets after receive window seq: %d\n", p_seq); 
     return; // packet not in receive window
   }

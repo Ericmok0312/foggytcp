@@ -3,9 +3,9 @@ INC_DIR = $(TOP_DIR)/inc
 SRC_DIR = $(TOP_DIR)/src
 BUILD_DIR = $(TOP_DIR)/build
 CXX=g++
-ASAN = -fsanitize=undefined -fno-omit-frame-pointer 
+ASAN = -fsanitize=address -fno-omit-frame-pointer -fsanitize=undefined
 #-fsanitize=undefined
-FLAGS = -pthread -fPIC -g -ggdb -pedantic -Wall -Wextra -Wno-missing-field-initializers -DDEBUG -I$(INC_DIR) $(ASAN) 
+FLAGS = -pthread -fPIC -g -ggdb -pedantic -Wall -Wextra -Wno-missing-field-initializers -DDEBUG -I$(INC_DIR)  
 FLAGS_Test = -pthread -fPIC -g -ggdb -pedantic -Wall -Wextra -Wno-missing-field-initializers -DDEBUG -I$(INC_DIR)
 SYSTEM_OBJS = $(BUILD_DIR)/system_tcp.o
 FOGGY_OBJS = $(BUILD_DIR)/foggy_tcp.o $(BUILD_DIR)/foggy_backend.o $(BUILD_DIR)/foggy_packet.o $(BUILD_DIR)/foggy_function.o
