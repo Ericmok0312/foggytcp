@@ -304,7 +304,6 @@ int foggy_read(void* in_sock, void *buf, int length) {
 int foggy_write(void *in_sock, const void *buf, int length) {
   struct foggy_socket_t *sock = (struct foggy_socket_t *)in_sock;
   while (pthread_mutex_lock(&(sock->send_lock)) != 0) {
-    debug_printf("Waiting for send lock in foggy write\n");
   }
   if (sock->sending_buf == NULL)
     sock->sending_buf = (uint8_t*) malloc(length);

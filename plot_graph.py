@@ -26,7 +26,10 @@ def process_data(data):
             data_chunk = np.array(data_chunk).reshape(-1, 1)
             clustering = DBSCAN(eps=10, min_samples=2).fit(data_chunk)
             labels = clustering.labels_
-            filtered_data = [data_chunk[i][0] for i in range(len(labels)) if labels[i] != -1]
+            if np.all(labels == -1):
+                filtered_data = data_chunk
+            else:
+                filtered_data = [data_chunk[i][0] for i in range(len(labels)) if labels[i] != -1]
             return filtered_data
 
         averaged_data = []
@@ -104,7 +107,7 @@ def visualize_data(test1, test2, test3, test1_avg, test2_avg, test3_avg):
 
 # Main function
 def main():
-    filename = "foggytcp/outputs/results.txt"  # Replace with your file name
+    filename = "foggytcp/outputs/results_2.txt"  # Replace with your file name
     data = read_data_from_file(filename)
     test1, test2, test3, test1_avg, test2_avg, test3_avg = process_data(data)
     visualize_data(test1, test2, test3, test1_avg, test2_avg, test3_avg)

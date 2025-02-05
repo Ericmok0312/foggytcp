@@ -161,11 +161,6 @@ void *begin_backend(void *in) {
       send_pkts(sock, NULL, 0);
       check_for_pkt(sock, NO_WAIT);
     }
-    // else{
-    //     if(sock->type == TCP_INITIATOR){
-    //     debug_printf("Nothing to send\n");
-    //   }
-    // }
 
 
     if (death == 1 && buf_len == 0 && sock->send_window.empty()) { // when the three condition is true, then the socket is destroyed
